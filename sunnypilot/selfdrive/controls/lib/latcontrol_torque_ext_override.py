@@ -28,6 +28,7 @@ class LatControlTorqueExtOverride:
         return False
 
       torque_params.latAccelFactor = float(self.params.get("TorqueParamsOverrideLatAccelFactor", return_default=True))
+      torque_params.latAccelOffset = float(self.params.get("TorqueParamsOverrideLatAccelOffset", return_default=True))
       torque_params.friction = float(self.params.get("TorqueParamsOverrideFriction", return_default=True))
       return True
 
