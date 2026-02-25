@@ -82,6 +82,7 @@ class TorqueEstimator(ParameterEstimator, TorqueEstimatorExt):
     if CP.lateralTuning.which() == 'torque':
       self.offline_friction = CP.lateralTuning.torque.friction
       self.offline_latAccelFactor = CP.lateralTuning.torque.latAccelFactor
+      self.offline_latAccelOffset = CP.lateralTuning.torque.latAccelOffset
 
     self.calibrator = PoseCalibrator()
 
@@ -91,7 +92,7 @@ class TorqueEstimator(ParameterEstimator, TorqueEstimatorExt):
 
     initial_params = {
       'latAccelFactor': self.offline_latAccelFactor,
-      'latAccelOffset': 0.0,
+      'latAccelOffset': self.offline_latAccelOffset,
       'frictionCoefficient': self.offline_friction,
       'points': []
     }
@@ -133,11 +134,12 @@ class TorqueEstimator(ParameterEstimator, TorqueEstimatorExt):
 
   @staticmethod
   def get_restore_key(CP, version):
-    a, b = None, None
+    a, b, c = None, None, None
     if CP.lateralTuning.which() == 'torque':
       a = CP.lateralTuning.torque.friction
       b = CP.lateralTuning.torque.latAccelFactor
-    return (CP.carFingerprint, CP.lateralTuning.which(), a, b, version)
+      c = CP.lateralTuning.torque.latAccelOffset
+    return (CP.carFingerprint, CP.lateralTuning.which(), a, b, c, version)
 
   def reset(self):
     self.resets += 1.0

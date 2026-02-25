@@ -33,6 +33,7 @@ class TorqueEstimatorExt:
     self.factor_sanity = 0.0
     self.friction_sanity = 0.0
     self.offline_latAccelFactor = 0.0
+    self.offline_latAccelOffset = 0.0
     self.offline_friction = 0.0
 
   def initialize_custom_params(self, decimated=False):
@@ -46,6 +47,7 @@ class TorqueEstimatorExt:
 
       if self._params.get_bool("CustomTorqueParams"):
         self.offline_latAccelFactor = float(self._params.get("TorqueParamsOverrideLatAccelFactor", return_default=True))
+        self.offline_latAccelOffset = float(self._params.get("TorqueParamsOverrideLatAccelOffset", return_default=True))
         self.offline_friction = float(self._params.get("TorqueParamsOverrideFriction", return_default=True))
 
   def _update_params(self):
