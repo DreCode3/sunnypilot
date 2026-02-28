@@ -27,6 +27,7 @@ import signal
 import subprocess
 import sys
 import time
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -74,6 +75,7 @@ class Scheduler:
 
     self.state_path = Path(args.state_path)
     self.events_log_path = Path(args.events_log)
+    self.errors_log_path = Path(args.errors_log)
     self.tone_path = Path(args.tone_file) if args.tone_file else self._default_tone_path()
 
     self.state = self._load_or_init_state()
@@ -185,6 +187,12 @@ class Scheduler:
     with self.events_log_path.open("a") as f:
       f.write(f"[{ts}] {text}\n")
 
+  def _append_error_log(self, text: str) -> None:
+    self.errors_log_path.parent.mkdir(parents=True, exist_ok=True)
+    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    with self.errors_log_path.open("a") as f:
+      f.write(f"[{ts}] {text}\n")
+
   def _play_tone(self) -> None:
     if not self.args.enable_tone:
       return
@@ -232,9 +240,17 @@ class Scheduler:
 
   def _apply_step(self, idx: int) -> None:
     step = self.steps[idx]
+    failed_keys: list[str] = []
     if not self.args.dry_run:
       for k, v in step.params.items():
-        self._params_put(self.params, str(k), v)
+        try:
+          self._params_put(self.params, str(k), v)
+        except Exception:
+          failed_keys.append(str(k))
+          cloudlog.exception("tune_scheduler_param_write_failed")
+          self._append_error_log(
+            f"Failed writing param '{k}' on step '{step.label}':\n{traceback.format_exc()}"
+          )
 
     self.state.current_step_idx = idx
     self.state.pending_step_idx = None
@@ -242,6 +258,11 @@ class Scheduler:
 
     msg = f"Applied step {idx+1}/{len(self.steps)} '{step.label}' @ {self.state.qualifying_distance_m/MILES_TO_METERS:.2f} qualifying miles"
     self._emit_notification(msg, idx)
+    if failed_keys:
+      self._emit_notification(
+        f"Step '{step.label}' skipped {len(failed_keys)} params: {', '.join(failed_keys)}",
+        idx,
+      )
 
   def _qualifies_for_distance(self) -> bool:
     cs = self.sm["carState"]
@@ -314,44 +335,49 @@ class Scheduler:
         time.sleep(0.2)
         continue
 
-      self.sm.update(100)
-      if not self.sm.updated["carState"]:
-        continue
+      try:
+        self.sm.update(100)
+        if not self.sm.updated["carState"]:
+          continue
 
-      t = self.sm.logMonoTime["carState"] * 1e-9
-      if self.last_t is None:
+        t = self.sm.logMonoTime["carState"] * 1e-9
+        if self.last_t is None:
+          self.last_t = t
+          # Try initial apply as soon as we have messages.
+          if self.state.pending_step_idx is not None and self._safe_to_switch_now():
+            self._apply_step(self.state.pending_step_idx)
+            self._write_state(force=True)
+          continue
+
+        dt = t - self.last_t
         self.last_t = t
-        # Try initial apply as soon as we have messages.
+        if dt <= 0.0 or dt > 0.5:
+          self._write_state()
+          continue
+
+        v_ego = float(self.sm["carState"].vEgo)
+        d = v_ego * dt
+        self.state.total_distance_m += d
+
+        if self._qualifies_for_distance():
+          self.state.qualifying_distance_m += d
+          if self.state.pending_step_idx is None and self.state.current_step_idx is not None:
+            self.state.distance_on_current_m += d
+
+        # Pending step apply
         if self.state.pending_step_idx is not None and self._safe_to_switch_now():
           self._apply_step(self.state.pending_step_idx)
-          self._write_state(force=True)
-        continue
 
-      dt = t - self.last_t
-      self.last_t = t
-      if dt <= 0.0 or dt > 0.5:
-        self._write_state()
-        continue
-
-      v_ego = float(self.sm["carState"].vEgo)
-      d = v_ego * dt
-      self.state.total_distance_m += d
-
-      if self._qualifies_for_distance():
-        self.state.qualifying_distance_m += d
+        # Check step completion
         if self.state.pending_step_idx is None and self.state.current_step_idx is not None:
-          self.state.distance_on_current_m += d
+          if self.state.distance_on_current_m >= self._target_distance_m():
+            self._advance_or_complete()
 
-      # Pending step apply
-      if self.state.pending_step_idx is not None and self._safe_to_switch_now():
-        self._apply_step(self.state.pending_step_idx)
-
-      # Check step completion
-      if self.state.pending_step_idx is None and self.state.current_step_idx is not None:
-        if self.state.distance_on_current_m >= self._target_distance_m():
-          self._advance_or_complete()
-
-      self._write_state()
+        self._write_state()
+      except Exception:
+        cloudlog.exception("tune_scheduler_loop_exception")
+        self._append_error_log(traceback.format_exc())
+        time.sleep(0.2)
 
     self._write_state(force=True)
     if self.state.done:
@@ -379,6 +405,11 @@ def parse_args() -> argparse.Namespace:
     "--events-log",
     default="/data/media/0/tune_scheduler_events.log",
     help="Event log output path",
+  )
+  p.add_argument(
+    "--errors-log",
+    default="/data/media/0/tune_scheduler_errors.log",
+    help="Error log output path",
   )
   p.add_argument(
     "--tone-file",

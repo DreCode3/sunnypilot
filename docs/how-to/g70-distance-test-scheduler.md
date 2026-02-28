@@ -48,6 +48,7 @@ The branch now starts `tools/scripts/tune_distance_scheduler.py` automatically o
 ```bash
 cat /data/media/0/tune_scheduler_state.json
 tail -n 50 /data/media/0/tune_scheduler_events.log
+tail -n 50 /data/media/0/tune_scheduler_errors.log
 tail -n 100 /data/media/0/tune_scheduler/run_*.log
 ```
 
