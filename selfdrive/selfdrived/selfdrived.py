@@ -143,8 +143,7 @@ class SelfdriveD(CruiseHelper):
     self.state_machine = StateMachine()
     self.rk = Ratekeeper(100, print_delay_threshold=None)
 
-    # Optional helper processes should never block engagement.
-    self.ignored_processes = {'mapd', 'distance_tune_scheduler'}
+    self.ignored_processes = {'mapd', }
 
     # Determine startup event
     is_remote = build_metadata.openpilot.comma_remote or build_metadata.openpilot.sunnypilot_remote
