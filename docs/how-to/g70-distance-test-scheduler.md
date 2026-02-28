@@ -41,6 +41,7 @@ The branch now starts `tools/scripts/tune_distance_scheduler.py` automatically o
 - Plan: `tools/tuning_plans/g70_commute_plan_v1.json`
 - No SSH is required once the device is updated to this commit.
 - State resume still applies, so progress continues across drives.
+- If prior state is already complete, scheduler auto-resets to step 1 on next start.
 
 ## Monitor status
 

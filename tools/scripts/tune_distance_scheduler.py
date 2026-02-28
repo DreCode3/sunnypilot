@@ -77,6 +77,8 @@ class Scheduler:
     self.tone_path = Path(args.tone_file) if args.tone_file else self._default_tone_path()
 
     self.state = self._load_or_init_state()
+    if self.state.done and self.args.reset_when_done:
+      self._reset_runtime_state_for_new_run()
     self.last_t = None
     self.last_state_write_t = 0.0
     self.last_tone_t = 0.0
@@ -169,6 +171,13 @@ class Scheduler:
     with tmp.open("w") as f:
       json.dump(blob, f, indent=2)
     tmp.replace(self.state_path)
+
+  def _reset_runtime_state_for_new_run(self) -> None:
+    self.state.current_step_idx = None
+    self.state.pending_step_idx = 0
+    self.state.distance_on_current_m = 0.0
+    self.state.done = False
+    self._append_event_log("Resume state was done; resetting scheduler to step 1.")
 
   def _append_event_log(self, text: str) -> None:
     self.events_log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -299,7 +308,12 @@ class Scheduler:
       f"Scheduler start (plan={self.plan_doc.get('name', 'unnamed')}, steps={len(self.steps)}, mode={self.count_mode})"
     )
 
-    while self.running and not self.state.done:
+    while self.running:
+      if self.state.done:
+        self._write_state()
+        time.sleep(0.2)
+        continue
+
       self.sm.update(100)
       if not self.sm.updated["carState"]:
         continue
@@ -388,6 +402,12 @@ def parse_args() -> argparse.Namespace:
     action=argparse.BooleanOptionalAction,
     default=True,
     help="Resume from saved state if plan_id matches",
+  )
+  p.add_argument(
+    "--reset-when-done",
+    action=argparse.BooleanOptionalAction,
+    default=True,
+    help="If resumed state is done, reset to step 1 for a new drive",
   )
   p.add_argument(
     "--dry-run",
