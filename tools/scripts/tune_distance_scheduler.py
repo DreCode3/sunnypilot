@@ -232,11 +232,11 @@ class Scheduler:
 
   @staticmethod
   def _params_put(params: Params, key: str, value: Any) -> None:
-    # Keep behavior explicit and consistent across value types.
+    # Params enforces key types; keep Python value types aligned.
     if isinstance(value, bool):
       params.put_bool(key, value)
     else:
-      params.put(key, str(value))
+      params.put(key, value)
 
   def _apply_step(self, idx: int) -> None:
     step = self.steps[idx]
@@ -247,7 +247,7 @@ class Scheduler:
           self._params_put(self.params, str(k), v)
         except Exception:
           failed_keys.append(str(k))
-          cloudlog.exception("tune_scheduler_param_write_failed")
+          cloudlog.error("tune_scheduler_param_write_failed")
           self._append_error_log(
             f"Failed writing param '{k}' on step '{step.label}':\n{traceback.format_exc()}"
           )
