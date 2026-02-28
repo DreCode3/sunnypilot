@@ -182,6 +182,15 @@ procs += [
 
   # locationd
   NativeProcess("locationd_llk", "sunnypilot/selfdrive/locationd", ["./locationd"], only_onroad),
+
+  # runtime tuning
+  NativeProcess(
+    "distance_tune_scheduler",
+    ".",
+    ["python3", "tools/scripts/tune_distance_scheduler.py", "--plan", "tools/tuning_plans/g70_commute_plan_v1.json"],
+    only_onroad,
+    enabled=not PC,
+  ),
 ]
 
 if os.path.exists("./github_runner.sh"):

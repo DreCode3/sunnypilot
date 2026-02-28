@@ -33,6 +33,15 @@ tools/scripts/run_tune_distance_scheduler.sh tools/tuning_plans/g70_commute_plan
 
 This launcher uses a lock and keeps running even if SSH disconnects.
 
+## Auto-start on each drive
+
+The branch now starts `tools/scripts/tune_distance_scheduler.py` automatically on every onroad transition via `manager`.
+
+- Process name: `distance_tune_scheduler`
+- Plan: `tools/tuning_plans/g70_commute_plan_v1.json`
+- No SSH is required once the device is updated to this commit.
+- State resume still applies, so progress continues across drives.
+
 ## Monitor status
 
 ```bash
