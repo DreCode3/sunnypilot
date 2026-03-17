@@ -43,7 +43,7 @@ VISION_METADATA_PATH = Path(__file__).parent / 'models/driving_vision_metadata.p
 POLICY_METADATA_PATH = Path(__file__).parent / 'models/driving_policy_metadata.pkl'
 MODELS_DIR = Path(__file__).parent / 'models'
 
-LAT_SMOOTH_SECONDS = 0.0
+LAT_SMOOTH_SECONDS = 0.1  # restored: upstream reverted to 0.1 (commaai/openpilot#36987 revert)
 LONG_SMOOTH_SECONDS = 0.3
 MIN_LAT_CONTROL_SPEED = 0.3
 
