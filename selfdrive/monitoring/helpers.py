@@ -35,7 +35,7 @@ class DRIVER_MONITOR_SETTINGS:
     self._EYE_THRESHOLD = 0.65
     self._SG_THRESHOLD = 0.9
     self._BLINK_THRESHOLD = 0.865
-    self._PHONE_THRESH = 0.65  # was 0.5 — raised to reduce false positives from hand/mount position (P90 was 0.53)
+    self._PHONE_THRESH = 0.8  # was 0.5 — raised to reduce false positives from hand/mount position (P90 was 0.53, P95 0.70)
 
     self._POSE_PITCH_THRESHOLD = 0.3133
     self._POSE_PITCH_THRESHOLD_SLACK = 0.3237
