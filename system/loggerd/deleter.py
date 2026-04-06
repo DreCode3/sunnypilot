@@ -11,7 +11,7 @@ from openpilot.system.loggerd.uploader import listdir_by_creation
 from openpilot.system.loggerd.xattr_cache import getxattr
 
 MIN_BYTES = 5 * 1024 * 1024 * 1024
-MIN_PERCENT = 10
+MIN_PERCENT = 15  # was 10 — raised to prevent disk filling past build cache tolerance
 
 DELETE_LAST = ['boot', 'crash']
 
