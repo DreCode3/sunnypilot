@@ -51,7 +51,7 @@ class DRIVER_MONITOR_SETTINGS:
     self._PITCH_MAX_OFFSET = 0.124
     self._PITCH_MIN_OFFSET = -0.0881
     self._YAW_MAX_OFFSET = 0.289
-    self._YAW_MIN_OFFSET = -0.0246
+    self._YAW_MIN_OFFSET = -0.7  # was -0.0246 — widened for Explorer ST driver camera geometry (raw yaw -0.54 rad)
 
     self._DCAM_UNCERTAIN_ALERT_THRESHOLD = 0.1
     self._DCAM_UNCERTAIN_ALERT_COUNT = int(60  / self._DT_DMON)
