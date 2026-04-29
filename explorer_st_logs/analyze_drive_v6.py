@@ -1638,6 +1638,229 @@ def analyze_pi_diagnostics(data, u, label):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# PATH 4 A/B ANALYSIS (asymmetric release-side EMA)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# CX1 schema v2: 29 positional fields. Index map for clarity below.
+CX1_FIELDS = ['frame', 'v', 'yr', 'aLat', 'cmd', 'rate', 'meas', 'des', 'pred', 'ema',
+              'preRL', 'rl', 'cmdInt', 'rateInt', 'ang', 'dAng', 'tq', 'ovr', 'lc',
+              'lookT', 'blend', 'cFac', 'lOff', 'lInt', 'pmd', 'burst',
+              'p4Rel', 'p4Tau', 'p4On']
+
+
+def _parse_cx1_logs(cx1_logs):
+  """Parse positional CX1 log lines into a dict of numpy arrays.
+     Returns ({field: np.array}, t_log) — t_log is the carlog timestamp per row."""
+  rows = []
+  t_logs = []
+  for ts, line in cx1_logs:
+    if line.startswith('SCHEMA='):
+      continue
+    parts = line.split()
+    if len(parts) < len(CX1_FIELDS):
+      continue
+    try:
+      rows.append([float(p) for p in parts[:len(CX1_FIELDS)]])
+      t_logs.append(ts)
+    except ValueError:
+      continue
+  if not rows:
+    return {}, np.array([])
+  arr = np.array(rows)
+  out = {f: arr[:, i] for i, f in enumerate(CX1_FIELDS)}
+  return out, np.array(t_logs)
+
+
+def _path4_metrics(cx1, mask, label):
+  """Compute the six acceptance-gate metrics on a subset of CX1 rows.
+     Returns dict of metrics. All inputs already filtered to engaged + speed-relevant."""
+  if not mask.any() or mask.sum() < 50:
+    return None
+  sub = {k: v[mask] for k, v in cx1.items()}
+  m = {}
+  m['n_samples'] = int(mask.sum())
+  m['mean_speed'] = float(np.mean(sub['v']))
+
+  # 1. Overshoot magnitude per sample where on a curve (|cmd|>0.001)
+  curve_mask = np.abs(sub['cmd']) > 0.001
+  if curve_mask.sum() > 10:
+    os_signed = sub['meas'][curve_mask] - sub['cmd'][curve_mask]
+    # Only count overshoots where measured passes BEYOND the command in same direction
+    cmd_sign = np.sign(sub['cmd'][curve_mask])
+    overshoot_only = os_signed * cmd_sign  # positive when meas overshoots past cmd
+    overshoot_only = overshoot_only[overshoot_only > 0]
+    m['mean_overshoot'] = float(np.mean(overshoot_only)) if len(overshoot_only) else 0.0
+    m['p95_overshoot'] = float(np.percentile(overshoot_only, 95)) if len(overshoot_only) else 0.0
+    m['n_overshoots'] = int(len(overshoot_only))
+  else:
+    m['mean_overshoot'] = 0.0
+    m['p95_overshoot'] = 0.0
+    m['n_overshoots'] = 0
+
+  # 2. Lane offset std (lOff field)
+  m['lane_off_std'] = float(np.std(sub['lOff']))
+  m['lane_off_p95_abs'] = float(np.percentile(np.abs(sub['lOff']), 95))
+
+  # 3. PI integral excursion peaks (lInt field)
+  m['lInt_p95_abs'] = float(np.percentile(np.abs(sub['lInt']), 95))
+  m['lInt_max_abs'] = float(np.max(np.abs(sub['lInt'])))
+
+  # 4. Lateral comfort RMS (aLat field)
+  m['rms_aLat'] = float(np.sqrt(np.mean(sub['aLat'] ** 2)))
+
+  # 5. Detector flutter rate — fraction of consecutive-frame transitions in p4Rel
+  # Only valid where samples are consecutive in frame number AND in 20-30 m/s band
+  hwy_mask = (sub['v'] >= 20) & (sub['v'] < 30)
+  if hwy_mask.sum() > 50:
+    f_hwy = sub['frame'][hwy_mask]
+    p4r_hwy = sub['p4Rel'][hwy_mask]
+    # Pairs where frame N+1 = frame N + step (5-10 frames at typical CX1 rate)
+    df = np.diff(f_hwy)
+    consecutive = df <= 12  # allow 10Hz curve cadence + slack
+    if consecutive.any():
+      flips = np.diff(p4r_hwy) != 0
+      m['flutter_rate_hwy_pct'] = 100.0 * float(np.sum(flips & consecutive) / max(1, np.sum(consecutive)))
+    else:
+      m['flutter_rate_hwy_pct'] = 0.0
+  else:
+    m['flutter_rate_hwy_pct'] = 0.0
+
+  # 6. Curvature reversal rate at >56 mph (25 m/s) — sign reversals in cmd per "mile"
+  # Rate is per sample, scaled to per-mile via mean speed
+  fast_mask = sub['v'] >= 25.0
+  if fast_mask.sum() > 50:
+    cmd_fast = sub['cmd'][fast_mask]
+    f_fast = sub['frame'][fast_mask]
+    df_fast = np.diff(f_fast)
+    consecutive_fast = df_fast <= 12
+    sign_changes = np.diff(np.sign(cmd_fast)) != 0
+    n_reversals = int(np.sum(sign_changes & consecutive_fast))
+    # Time over consecutive samples — assume ~10Hz when consecutive
+    time_consec_sec = float(np.sum(consecutive_fast) * 0.1)
+    miles = (np.mean(sub['v'][fast_mask]) * time_consec_sec) / 1609.34
+    m['reversals_per_mile_fast'] = float(n_reversals / max(0.001, miles))
+    m['n_reversals_fast'] = n_reversals
+    m['miles_fast'] = float(miles)
+  else:
+    m['reversals_per_mile_fast'] = 0.0
+    m['n_reversals_fast'] = 0
+    m['miles_fast'] = 0.0
+
+  # Helpful side metrics: detector trip rate and tau distribution
+  m['detector_trip_pct'] = 100.0 * float(np.mean(sub['p4Rel'] > 0.5))
+  m['mean_smooth_tau'] = float(np.mean(sub['p4Tau']))
+  return m
+
+
+def analyze_path4_ab(data, u, label):
+  """V6 Path 4 A/B comparison. Splits CX1 logs by p4On and compares acceptance gates."""
+  print(f"\n{'='*80}")
+  print(f"PATH 4 A/B ANALYSIS — {label}")
+  print(f"{'='*80}")
+
+  cx1_logs = data.get('cx1_logs', [])
+  if not cx1_logs:
+    print("  No CX1: log messages found. (Path 4 telemetry requires CX1-instrumented build.)")
+    return {}
+
+  cx1, t_log = _parse_cx1_logs(cx1_logs)
+  if not cx1:
+    print(f"  CX1 logs found ({len(cx1_logs)}) but parsing produced 0 rows. Schema mismatch?")
+    return {}
+
+  print(f"  CX1 rows parsed: {len(cx1['frame']):,}")
+  n_on = int(np.sum(cx1['p4On'] > 0.5))
+  n_off = int(np.sum(cx1['p4On'] < 0.5))
+  print(f"  Path 4 ON  samples: {n_on:,}")
+  print(f"  Path 4 OFF samples: {n_off:,}")
+
+  if n_on < 50 or n_off < 50:
+    print("\n  Insufficient samples in one or both conditions (<50). Need a paired drive with toggle flip.")
+    return {'n_on': n_on, 'n_off': n_off}
+
+  # Engaged + relevant-speed mask: above 4 m/s where EMA actually runs
+  engaged = (cx1['v'] >= 4.0) & (cx1['ovr'] < 0.5)
+  off_mask = engaged & (cx1['p4On'] < 0.5)
+  on_mask  = engaged & (cx1['p4On'] > 0.5)
+
+  off_m = _path4_metrics(cx1, off_mask, 'OFF')
+  on_m  = _path4_metrics(cx1, on_mask, 'ON')
+
+  if off_m is None or on_m is None:
+    print("\n  Insufficient engaged samples for one of the conditions.")
+    return {'n_on': n_on, 'n_off': n_off}
+
+  # Acceptance gates
+  print(f"\n  ── Sample summary ──")
+  print(f"  {'Condition':<10} {'N':>8} {'Mean spd m/s':>14}")
+  print(f"  {'OFF':<10} {off_m['n_samples']:>8} {off_m['mean_speed']:>14.2f}")
+  print(f"  {'ON':<10} {on_m['n_samples']:>8} {on_m['mean_speed']:>14.2f}")
+
+  def _pct_change(off, on):
+    if off == 0:
+      return float('nan')
+    return (on - off) / abs(off) * 100.0
+
+  rows = [
+    # (label, off_value, on_value, lower_better, format, gate_text)
+    ('Mean overshoot (1/m)',       off_m['mean_overshoot'],   on_m['mean_overshoot'],   True,  '.6f', '≥15% reduction'),
+    ('P95 overshoot (1/m)',        off_m['p95_overshoot'],    on_m['p95_overshoot'],    True,  '.6f', 'no regression'),
+    ('Overshoot count',            off_m['n_overshoots'],     on_m['n_overshoots'],     True,  '.0f', 'informational'),
+    ('Lane offset std (m)',        off_m['lane_off_std'],     on_m['lane_off_std'],     True,  '.4f', 'no regression'),
+    ('Lane offset P95|abs| (m)',   off_m['lane_off_p95_abs'], on_m['lane_off_p95_abs'], True,  '.4f', 'no regression'),
+    ('PI integral P95|abs|',       off_m['lInt_p95_abs'],     on_m['lInt_p95_abs'],     True,  '.4f', 'no regression'),
+    ('PI integral max|abs|',       off_m['lInt_max_abs'],     on_m['lInt_max_abs'],     True,  '.4f', 'no regression'),
+    ('Lateral RMS aLat (m/s²)',    off_m['rms_aLat'],         on_m['rms_aLat'],         True,  '.4f', 'no regression'),
+    ('Reversals/mile @>56mph',     off_m['reversals_per_mile_fast'], on_m['reversals_per_mile_fast'], True, '.1f', 'should drop'),
+    ('Detector trip %',            off_m['detector_trip_pct'], on_m['detector_trip_pct'], False, '.1f', 'should match (detector runs both)'),
+    ('Flutter rate @20-30m/s %',   off_m['flutter_rate_hwy_pct'], on_m['flutter_rate_hwy_pct'], True, '.1f', '<10% acceptable'),
+    ('Mean smooth_tau (s)',        off_m['mean_smooth_tau'],  on_m['mean_smooth_tau'],  False, '.4f', 'ON should be higher'),
+  ]
+
+  print(f"\n  ── Acceptance gates (OFF vs ON) ──")
+  print(f"  {'Metric':<28} {'OFF':>12} {'ON':>12} {'Δ %':>9} {'Gate':<32}")
+  print(f"  {'-'*28} {'-'*12} {'-'*12} {'-'*9} {'-'*32}")
+  for name, ov, nv, lower_better, fmt, gate in rows:
+    pct = _pct_change(ov, nv)
+    direction = '↓' if (pct < 0) == lower_better else '↑'
+    pct_str = f"{pct:+.1f}{direction}" if not np.isnan(pct) else '   --'
+    print(f"  {name:<28} {ov:>12{fmt}} {nv:>12{fmt}} {pct_str:>9} {gate:<32}")
+
+  # Verdict line: did we meet the 15% mean OS reduction with no regressions?
+  print(f"\n  ── Verdict against QA gates ──")
+  os_pct = _pct_change(off_m['mean_overshoot'], on_m['mean_overshoot'])
+  off_std_pct = _pct_change(off_m['lane_off_std'], on_m['lane_off_std'])
+  pi_p95_pct = _pct_change(off_m['lInt_p95_abs'], on_m['lInt_p95_abs'])
+  rms_pct = _pct_change(off_m['rms_aLat'], on_m['rms_aLat'])
+  flutter_ok = on_m['flutter_rate_hwy_pct'] < 10.0
+  rev_pct = _pct_change(off_m['reversals_per_mile_fast'], on_m['reversals_per_mile_fast'])
+
+  def _check(name, condition, detail):
+    sym = 'PASS' if condition else 'FAIL'
+    print(f"    [{sym}] {name}: {detail}")
+    return condition
+
+  passes = []
+  passes.append(_check('Mean OS reduction ≥15%',  os_pct <= -15.0, f"got {os_pct:+.1f}%"))
+  passes.append(_check('Lane offset std',         off_std_pct <= 5.0, f"changed {off_std_pct:+.1f}% (allow ≤+5%)"))
+  passes.append(_check('PI integral P95',         pi_p95_pct <= 10.0, f"changed {pi_p95_pct:+.1f}% (allow ≤+10%)"))
+  passes.append(_check('Lateral RMS',             rms_pct <= 5.0, f"changed {rms_pct:+.1f}% (allow ≤+5%)"))
+  passes.append(_check('Flutter <10% at hwy',     flutter_ok, f"ON flutter={on_m['flutter_rate_hwy_pct']:.1f}%"))
+  passes.append(_check('Reversal rate @>56mph',   rev_pct <= 5.0, f"changed {rev_pct:+.1f}% (target ↓)"))
+
+  n_pass = sum(passes)
+  print(f"\n    SUMMARY: {n_pass}/{len(passes)} gates passed.")
+  if n_pass == len(passes):
+    print("    → Path 4 meets all QA gates. Ready to default-enable for Mode 0.")
+  elif passes[0] and n_pass >= 4:
+    print("    → Mixed result: OS reduction met, some side effects. Review individual gates.")
+  else:
+    print("    → Path 4 does NOT meet primary OS gate. Tune smooth_tau_release or revert.")
+
+  return {'off': off_m, 'on': on_m, 'gates_passed': n_pass, 'gates_total': len(passes)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # DISTURBANCE vs HUNTING ANALYSIS
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -2159,6 +2382,7 @@ def main():
     micro_osc  = analyze_micro_oscillation(u, label)
     pi_diag    = analyze_pi_diagnostics(data, u, label)
     dist_hunt  = analyze_disturbance_vs_hunting(u, label)
+    path4_ab   = analyze_path4_ab(data, u, label)
 
     results.append({
       'label': label, 'overview': overview, 'filter': filter_eff,
@@ -2166,7 +2390,7 @@ def main():
       'lane_center': lane_center, 'curve_dyn': curve_dyn,
       'override': override, 'comfort': comfort,
       'micro_osc': micro_osc, 'pi_diag': pi_diag,
-      'dist_hunt': dist_hunt,
+      'dist_hunt': dist_hunt, 'path4_ab': path4_ab,
     })
 
   print_comparison(results)
