@@ -42,6 +42,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"FordCurveMode", {PERSISTENT, STRING, "0"}},
     {"FordPath4Enabled", {PERSISTENT, BOOL, "0"}},
     {"LaneBiasIntegral", {PERSISTENT, STRING, "0"}},
+    {"disable_BP_long_UI", {PERSISTENT, BOOL, "0"}},
+    {"disable_downhill_comp_UI", {PERSISTENT, BOOL, "1"}},
     {"ExperimentalMode", {PERSISTENT | BACKUP, BOOL}},
     {"ExperimentalModeConfirmed", {PERSISTENT | BACKUP, BOOL}},
     {"FirmwareQueryDone", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, BOOL}},
