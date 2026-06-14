@@ -1,0 +1,3 @@
+pass_id,folder,driving_model,pi_set_declared,direction,intended_speed_mph
+loop1_golden,controlled_test_analysis/test_data/golden,CD210,golden,both,
+loop2_weak,controlled_test_analysis/test_data/weak,CD210,weak,both,

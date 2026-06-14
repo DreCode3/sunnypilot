@@ -1,0 +1,33 @@
+{
+  "passes": 7,
+  "n_per_config": {
+    "CD210/golden": 1,
+    "CD210/weak": 4,
+    "OPM7/weak": 2
+  },
+  "config_recovered_matches_declared": true,
+  "no_unknown_config": true,
+  "builds": [
+    "abc123"
+  ],
+  "single_build": true,
+  "integrator_reset_ok": true,
+  "interleaved": false,
+  "cal_yaw_by_config": {
+    "CD210/golden": -2.907,
+    "CD210/weak": -2.922,
+    "OPM7/weak": -2.925
+  },
+  "cal_yaw_stable": true,
+  "speed_med_by_config": {
+    "CD210/golden": 54.5,
+    "CD210/weak": 47.4,
+    "OPM7/weak": 50.6
+  },
+  "lead_gate_active": false,
+  "AUDIT_OK": true,
+  "_warnings": [
+    "interleaved",
+    "lead_gate"
+  ]
+}

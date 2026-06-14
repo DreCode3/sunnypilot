@@ -1,0 +1,33 @@
+test,param,lateral,within_r,within_p,in_family,q_global,note
+integrator,int_railed_frac,centering_signed,-0.5499231950844855,0.0004998750312421,True,0.013996500874778802,REVERSE-CAUSAL (controller responds to offset; not a lever)
+integrator,int_abs,centering_signed,-0.4683179723502305,0.0019995001249687,True,0.027993001749561798,REVERSE-CAUSAL (controller responds to offset; not a lever)
+integrator,int_abs,centering_abs,0.3258448540706605,0.0372406898275431,True,0.2729317670582349,REVERSE-CAUSAL (controller responds to offset; not a lever)
+integrator,int_railed_frac,weave_path,-0.319076420890937,0.0389902524368907,True,0.2729317670582349,
+integrator,int_railed_frac,centering_abs,0.3089477726574501,0.0527368157960509,True,0.27380654836290913,REVERSE-CAUSAL (controller responds to offset; not a lever)
+integrator,int_abs,weave_path,-0.2886904761904762,0.0587353161709572,True,0.27380654836290913,
+integrator,int_railed_frac,weave_steer,-0.2716973886328725,0.0689827543114221,True,0.27380654836290913,
+calibration,cal_roll,weave_steer,0.2737293325168402,0.0749812546863284,False,,collinear dup of cal_yaw; excluded from FDR family
+calibration,cal_yaw,weave_steer,0.272119674569154,0.0782304423894026,True,0.27380654836290913,
+integrator,int_abs,weave_steer,-0.2483198924731182,0.1027243189202699,True,0.30092476880779795,
+calibration,cal_yaw,weave_path,0.2542384743242061,0.1074731317170707,True,0.30092476880779795,
+calibration,cal_roll,weave_path,0.2547283702213279,0.1074731317170707,False,,collinear dup of cal_yaw; excluded from FDR family
+liveparams,angleOffsetAvg,centering_abs,-0.1979704312833523,0.208447888027993,True,0.5050404065650254,
+liveparams,stiffness,weave_path,-0.1827486659084944,0.216445888527868,True,0.5050404065650254,
+liveparams,stiffness,weave_steer,-0.1667570641238736,0.2446888277930517,True,0.5270220906311883,
+calibration,cal_yaw,centering_signed,0.1443968156766687,0.306173456635841,True,0.5850537365658586,
+liveparams,stiffness,centering_abs,0.1364884961945586,0.3134216445888528,True,0.5850537365658586,
+calibration,cal_roll,centering_signed,0.1369084069635202,0.3314171457135716,False,,collinear dup of cal_yaw; excluded from FDR family
+calibration,cal_pitch,weave_path,-0.1352987490158341,0.3804048987753062,True,0.6657085728567859,
+calibration,cal_roll,centering_abs,0.1025807016009097,0.4831292176955761,False,,collinear dup of cal_yaw; excluded from FDR family
+calibration,cal_yaw,centering_abs,0.1012509841658647,0.4893776555861034,True,0.7690708901721938,
+calibration,cal_pitch,weave_steer,-0.0975767649374507,0.5216195951012247,True,0.7690708901721938,
+liveparams,steerRatio,weave_path,0.0977167351937713,0.5218695326168458,True,0.7690708901721938,
+calibration,cal_pitch,centering_signed,-0.0848744641763625,0.5708572856785804,True,0.7992001999500126,
+liveparams,steerRatio,weave_steer,0.0804304085381856,0.6153461634591352,True,0.820461551278847,
+calibration,cal_pitch,centering_abs,0.0537660747091243,0.7350662334416396,True,0.9355388425620869,
+liveparams,steerRatio,centering_abs,0.0313008485696789,0.8352911772056986,True,0.971007248187953,
+liveparams,angleOffsetAvg,weave_path,0.0280815326743067,0.8625343664083979,True,0.971007248187953,
+liveparams,stiffness,hunt_steer,-0.0209080570378794,0.878780304923769,True,0.971007248187953,
+liveparams,angleOffsetAvg,hunt_steer,0.0152392616568979,0.9185203699075232,True,0.971007248187953,
+liveparams,steerRatio,hunt_steer,-0.010270317557519,0.944763809047738,True,0.971007248187953,
+liveparams,angleOffsetAvg,weave_steer,0.005546321406701,0.971007248187953,True,0.971007248187953,

@@ -1,0 +1,29 @@
+{
+  "passes": 2,
+  "n_per_config": {
+    "CD210/golden": 1,
+    "CD210/weak": 1
+  },
+  "config_recovered_matches_declared": true,
+  "no_unknown_config": true,
+  "builds": [
+    "5e0785b98756e6dd9fb7557f58edc4e588f48c2b"
+  ],
+  "single_build": true,
+  "integrator_reset_ok": true,
+  "interleaved": false,
+  "cal_yaw_by_config": {
+    "CD210/golden": -2.879,
+    "CD210/weak": -2.894
+  },
+  "cal_yaw_stable": true,
+  "speed_med_by_config": {
+    "CD210/golden": 50.1,
+    "CD210/weak": 48.1
+  },
+  "lead_gate_active": true,
+  "AUDIT_OK": true,
+  "_warnings": [
+    "interleaved"
+  ]
+}

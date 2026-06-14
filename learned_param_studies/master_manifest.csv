@@ -1,0 +1,14 @@
+drive_id,folder,driving_model,note
+b1,explorer_st_logs/route_b1,CD210,weak-era
+b2,explorer_st_logs/route_b2,CD210,weak-era
+b3,explorer_st_logs/route_b3,CD210,mostly-manual
+b4,explorer_st_logs/route_b4,CD210,weak-era
+b5,explorer_st_logs/route_b5,CD210,weak-era
+b6,explorer_st_logs/route_b6,CD210,mostly-manual
+b7,explorer_st_logs/route_b7,CD210,mostly-manual
+b8,explorer_st_logs/route_b8,CD210,golden-jun13
+ba_tonight_golden,controlled_test_analysis/test_data/golden,CD210,golden-jun14
+bb_tonight_weak,controlled_test_analysis/test_data/weak,CD210,weak-jun14
+op_9b,explorer_st_logs/route_9b,OPM7,weak
+op_a0,explorer_st_logs/route_a0,OPM7,weak
+op_7f,explorer_st_logs/route_7f,OPM7,golden-unverified

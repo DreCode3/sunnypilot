@@ -1,0 +1,6 @@
+matplotlib==3.11.0
+numpy==2.4.6
+pandas==3.0.3
+pycapnp==2.2.3
+scipy==1.17.1
+zstandard==0.25.0

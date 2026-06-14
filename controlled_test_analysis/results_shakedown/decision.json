@@ -1,0 +1,40 @@
+{
+  "CD210/golden_minus_CD210/weak": {
+    "verdict": "INSUFFICIENT_DATA",
+    "why": "need >= 4 passes/config and >= 8 strata (perm floor + power; \u00a711/\u00a712)",
+    "battery_survival": false,
+    "primary": {
+      "metric": "P2_curv_rms_1e4",
+      "comparison": "CD210/golden_minus_CD210/weak",
+      "a": "CD210/weak",
+      "b": "CD210/golden",
+      "n_passes_a": 4,
+      "n_passes_b": 1,
+      "n_strata": 2,
+      "effect": -0.11441963077916628,
+      "base": 1.7776071551842283,
+      "effect_pct": -6.43672199706622,
+      "sign_consistency_neg": 1.0,
+      "sign_consistency_pos": 0.0
+    }
+  },
+  "OPM7/weak_minus_CD210/weak": {
+    "verdict": "INSUFFICIENT_DATA",
+    "why": "need >= 4 passes/config and >= 8 strata (perm floor + power; \u00a711/\u00a712)",
+    "battery_survival": false,
+    "primary": {
+      "metric": "P2_curv_rms_1e4",
+      "comparison": "OPM7/weak_minus_CD210/weak",
+      "a": "CD210/weak",
+      "b": "OPM7/weak",
+      "n_passes_a": 4,
+      "n_passes_b": 2,
+      "n_strata": 0,
+      "effect": NaN,
+      "base": NaN,
+      "effect_pct": NaN,
+      "sign_consistency_neg": NaN,
+      "sign_consistency_pos": NaN
+    }
+  }
+}

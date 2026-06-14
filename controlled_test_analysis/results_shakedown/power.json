@@ -1,0 +1,30 @@
+{
+  "CD210/golden_minus_CD210/weak": {
+    "CD210/golden": {
+      "n_pass": 1,
+      "mean": 1.737310822440116,
+      "sd": NaN
+    },
+    "CD210/weak": {
+      "n_pass": 4,
+      "mean": 2.4015930990371936,
+      "sd": 0.40673355012576035
+    },
+    "_pooled_cv": 0.1693598929347445,
+    "_n_per_arm_for_80pct_power_at_threshold": 20
+  },
+  "OPM7/weak_minus_CD210/weak": {
+    "CD210/weak": {
+      "n_pass": 4,
+      "mean": 2.4015930990371936,
+      "sd": 0.40673355012576035
+    },
+    "OPM7/weak": {
+      "n_pass": 2,
+      "mean": 1.455456593946652,
+      "sd": 0.15643471112832713
+    },
+    "_pooled_cv": 0.13842071475237308,
+    "_n_per_arm_for_80pct_power_at_threshold": 14
+  }
+}

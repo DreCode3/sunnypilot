@@ -1,0 +1,8 @@
+pass_id,folder,driving_model,pi_set_declared,direction,intended_speed_mph
+p_b1,explorer_st_logs/route_b1,CD210,weak,,50
+p_b2,explorer_st_logs/route_b2,CD210,weak,,50
+p_b4,explorer_st_logs/route_b4,CD210,weak,,45
+p_b5,explorer_st_logs/route_b5,CD210,weak,,42
+p_b8,explorer_st_logs/route_b8,CD210,golden,,60
+p_9b,explorer_st_logs/route_9b,OPM7,weak,,46
+p_a0,explorer_st_logs/route_a0,OPM7,weak,,55

@@ -1,0 +1,191 @@
+{
+  "route_dir": "explorer_st_logs/route_ab/000000ab--9db8677573",
+  "n_cx1_rows": 145,
+  "t_span_sec": 119.99858513699999,
+  "n_events": 1,
+  "speed_bin_summary": {
+    "45-65_gentle": {
+      "n": 1,
+      "peak_bias_pct_median": -0.016212418300653487,
+      "overshoot_pct_median": 0.11555228758169947,
+      "timing_offset_ms_median": 502.6552260000017
+    }
+  },
+  "overrides": [
+    {
+      "t_override": 211.732097714,
+      "speed_mph": 59.77264,
+      "speed_mps": 26.72,
+      "peak_cmd_within_1s": 9.4e-05,
+      "peak_cmd_within_5s": 0.000124,
+      "time_since_last_curve_sec": null,
+      "time_since_last_curve_strict_sec": null,
+      "curve_threshold_primary": 0.001,
+      "curve_threshold_strict": 0.0015,
+      "mean_residual_bias_corrected": -5.857094017094014e-05,
+      "peak_residual_abs_bias_corrected": 0.00010917094017094016,
+      "ang_at_trigger": -6.9,
+      "global_bias_used": 0.00023917094017094015
+    }
+  ],
+  "events": [
+    {
+      "event_id": 0,
+      "metadata": {
+        "start_idx": 56,
+        "end_idx": 74,
+        "apex_idx": 68,
+        "t_start": 166.231096671,
+        "t_end": 167.526048472,
+        "t_apex": 166.926629949,
+        "peak_cmd": -0.0017,
+        "direction": "left",
+        "mean_v_mps": 28.138947368421054,
+        "mean_v_mph": 62.9468252631579,
+        "duration_sec": 1.2949518010000247,
+        "magnitude_class": "gentle",
+        "n_samples": 19,
+        "had_override": false,
+        "dir_match_pct": 1.0
+      },
+      "bias": {
+        "pre": 0.00023377777777777777,
+        "post": 0.0002251,
+        "combined": 0.00022943888888888887,
+        "n_pre": 9,
+        "n_post": 10,
+        "confident": true
+      },
+      "metrics": {
+        "peak_bias_abs": 2.756111111111093e-05,
+        "peak_bias_pct": -0.016212418300653487,
+        "overshoot_abs": 0.0001964388888888891,
+        "overshoot_pct": 0.11555228758169947,
+        "crosscorr_r": 0.9303635566746469,
+        "apex70_bias": 0.000655561111111111,
+        "entry_bias_30": 4.156111111111105e-05,
+        "exit_bias_30": 0.00020556111111111114,
+        "settling_time_sec": 1.0014523899999972,
+        "timing_offset_ms": 502.6552260000017,
+        "cmd_peak_abs": 0.0017,
+        "meas_peak_abs": 0.001896438888888889
+      },
+      "fft": {
+        "dAng": {
+          "dom_hz": 0.392156862745098,
+          "pct_0_1": 0.7043717024039003,
+          "pct_1_3": 0.26551857376658694,
+          "pct_3_10": 0.030109723829512484,
+          "total_power": 1499391.5427538506
+        },
+        "aLat": {
+          "dom_hz": 0.196078431372549,
+          "pct_0_1": 0.9683534109557331,
+          "pct_1_3": 0.030911072096226334,
+          "pct_3_10": 0.0007355169480404317,
+          "total_power": 563.9123493889783
+        },
+        "effective_fs_hz": 20.0,
+        "n_samples_resampled": 102
+      },
+      "epas_linearity": {
+        "slope": 0.9277753948975591,
+        "intercept": -3.955924118885512e-06,
+        "r2": 0.3557637091448007,
+        "residual_std": 0.000413291685140048,
+        "snr": 4.11331769092799,
+        "reliable": false,
+        "n_samples": 21
+      },
+      "planner": {
+        "des": {
+          "dom_hz": 0.196078431372549,
+          "pct_0_1": 0.9968671819312468,
+          "pct_1_3": 0.0028854513421267217,
+          "pct_3_10": 0.00024736672662637696,
+          "total_power": 0.0008920319826890451
+        },
+        "pred": {
+          "dom_hz": 0.196078431372549,
+          "pct_0_1": 0.9951816258529498,
+          "pct_1_3": 0.004230589654095197,
+          "pct_3_10": 0.0005877844929547488,
+          "total_power": 0.0007658592746789333
+        },
+        "ema": {
+          "dom_hz": 0.196078431372549,
+          "pct_0_1": 0.9968091073596379,
+          "pct_1_3": 0.0029134527723622167,
+          "pct_3_10": 0.00027743986799965684,
+          "total_power": 0.0008503629174447388
+        },
+        "cmd": {
+          "dom_hz": 0.196078431372549,
+          "pct_0_1": 0.9945554939451348,
+          "pct_1_3": 0.004723946758284386,
+          "pct_3_10": 0.0007205592965807587,
+          "total_power": 0.0006470005634379815
+        },
+        "meas": {
+          "dom_hz": 0.196078431372549,
+          "pct_0_1": 0.968673591508771,
+          "pct_1_3": 0.030594345465711104,
+          "pct_3_10": 0.0007320630255179345,
+          "total_power": 0.0009072917335910296
+        },
+        "pipeline_gain_1_3": 1.1874503838595873,
+        "ema_gain_1_3": 0.9625385116604533,
+        "epas_gain_1_3": 9.081936630516083
+      },
+      "blend": {
+        "start": 0.184,
+        "end": 0.188,
+        "min": 0.184,
+        "max": 0.188,
+        "delta": 0.0040000000000000036,
+        "std": 0.001048898963636072
+      },
+      "integral": {
+        "lInt_start": 0.3,
+        "lInt_apex": 0.2824,
+        "lInt_end": 0.1208,
+        "lInt_max_abs": 0.3,
+        "lInt_pre_mean": 0.2987214285714285,
+        "lInt_post_mean": 0.22025,
+        "lOff_max_abs": 0.147,
+        "max_rate_abs_per_s": 0.1194982717207821,
+        "p95_rate_abs_per_s": 0.11871265394452525,
+        "gate_flicker_likely": false
+      },
+      "rl_cycling": {
+        "clipped_frac": 0.043478260869565216,
+        "clipped_n": 1,
+        "direction_flips": 0,
+        "flips_per_sec": 0.0,
+        "max_abs_clip": 9.000000000000002e-05
+      },
+      "ema_lag": {
+        "lag_ms": 11.526915922732146,
+        "lag_ms_resolution": 50.0,
+        "lag_samples_int": 0,
+        "lag_samples_sub": 0.2305383184546429,
+        "peak_corr": 0.9973753438283791
+      },
+      "hunting": {
+        "zero_crossings": 1,
+        "crossings_per_sec": 0.198019801980198,
+        "mean_abs_rate_per_s": 0.0005609345761237488,
+        "peak_rate_per_s": 0.002088794603916328,
+        "rate_threshold": 0.0001,
+        "n_uniform_samples": 102,
+        "mean_abs_dcmd_per_s": 0.0005609345761237488,
+        "peak_dcmd_per_s": 0.002088794603916328,
+        "des_crossings_per_sec": 0.198019801980198,
+        "des_zero_crossings": 1,
+        "des_peak_rate_per_s": 0.002472793377533676,
+        "excess_crossings_per_sec": 0.0
+      },
+      "flags": []
+    }
+  ]
+}

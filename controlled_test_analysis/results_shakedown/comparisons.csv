@@ -1,0 +1,11 @@
+metric,comparison,a,b,n_passes_a,n_passes_b,n_strata,effect,base,effect_pct,sign_consistency_neg,sign_consistency_pos
+P2_curv_rms_1e4,CD210/golden_minus_CD210/weak,CD210/weak,CD210/golden,4,1,2,-0.11441963077916628,1.7776071551842283,-6.43672199706622,1.0,0.0
+P1_steer_rms_deg,CD210/golden_minus_CD210/weak,CD210/weak,CD210/golden,4,1,2,0.006589967050946888,0.7572428952250977,0.8702580232182907,0.5,0.5
+S1_disp_pp_cm,CD210/golden_minus_CD210/weak,CD210/weak,CD210/golden,4,1,2,27.379954824709728,21.27492927615134,128.69586765396193,0.0,1.0
+S3_episode_frac,CD210/golden_minus_CD210/weak,CD210/weak,CD210/golden,4,1,2,0.06335920676855344,0.06274007682458387,100.98681731885765,0.0,1.0
+S4_steer_per_path,CD210/golden_minus_CD210/weak,CD210/weak,CD210/golden,4,1,2,0.03423625639284003,0.43025159276283265,7.957264300404825,0.0,1.0
+P2_curv_rms_1e4,OPM7/weak_minus_CD210/weak,CD210/weak,OPM7/weak,4,2,0,,,,,
+P1_steer_rms_deg,OPM7/weak_minus_CD210/weak,CD210/weak,OPM7/weak,4,2,0,,,,,
+S1_disp_pp_cm,OPM7/weak_minus_CD210/weak,CD210/weak,OPM7/weak,4,2,0,,,,,
+S3_episode_frac,OPM7/weak_minus_CD210/weak,CD210/weak,OPM7/weak,4,2,0,,,,,
+S4_steer_per_path,OPM7/weak_minus_CD210/weak,CD210/weak,OPM7/weak,4,2,0,,,,,

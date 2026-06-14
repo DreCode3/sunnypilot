@@ -1,0 +1,21 @@
+# Clean-room package manifest
+drives: 6 (drive_01..drive_06), raw openpilot rlog.zst only (no video)
+
+## per-drive segment counts
+  drive_01: 9 segments
+  drive_02: 31 segments
+  drive_03: 43 segments
+  drive_04: 18 segments
+  drive_05: 14 segments
+  drive_06: 50 segments
+
+## docs
+  CUSTOMIZATIONS.md (65 lines)
+  HOW_TO_READ_LOGS.md (57 lines)
+  PROBLEM_STATEMENT.md (42 lines)
+  README.md (50 lines)
+  REFERENCES.md (34 lines)
+  SYSTEM_OVERVIEW.md (43 lines)
+  drives/METADATA.csv (7 lines)
+
+total size: 1.9G

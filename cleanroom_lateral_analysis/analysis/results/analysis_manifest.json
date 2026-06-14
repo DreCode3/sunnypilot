@@ -1,0 +1,64 @@
+{
+  "fs_hz": 20.0,
+  "window_s": 30.0,
+  "min_eligible_s_per_window": 20.0,
+  "settings": [
+    {
+      "name": "primary",
+      "band_lo": 0.1,
+      "band_hi": 0.35,
+      "min_speed": 20.0,
+      "max_speed": 35.0,
+      "curve_abs_max": 0.0015
+    },
+    {
+      "name": "strict_curve",
+      "band_lo": 0.1,
+      "band_hi": 0.35,
+      "min_speed": 20.0,
+      "max_speed": 35.0,
+      "curve_abs_max": 0.001
+    },
+    {
+      "name": "loose_curve",
+      "band_lo": 0.1,
+      "band_hi": 0.35,
+      "min_speed": 20.0,
+      "max_speed": 35.0,
+      "curve_abs_max": 0.002
+    },
+    {
+      "name": "broad_band",
+      "band_lo": 0.08,
+      "band_hi": 0.5,
+      "min_speed": 20.0,
+      "max_speed": 35.0,
+      "curve_abs_max": 0.0015
+    },
+    {
+      "name": "narrow_band",
+      "band_lo": 0.12,
+      "band_hi": 0.3,
+      "min_speed": 20.0,
+      "max_speed": 35.0,
+      "curve_abs_max": 0.0015
+    },
+    {
+      "name": "lower_speed",
+      "band_lo": 0.1,
+      "band_hi": 0.35,
+      "min_speed": 15.0,
+      "max_speed": 35.0,
+      "curve_abs_max": 0.0015
+    }
+  ],
+  "primary_metrics": [
+    "steer_rms_deg",
+    "actual_curv_rms_1pm",
+    "lat_accel_rms_mps2",
+    "cmd_curv_rms_1pm",
+    "desired_curv_rms_1pm",
+    "model_path_y20_rms_m",
+    "lane_center_y20_rms_m"
+  ]
+}

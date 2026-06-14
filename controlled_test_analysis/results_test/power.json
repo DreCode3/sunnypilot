@@ -1,0 +1,16 @@
+{
+  "CD210/golden_minus_CD210/weak": {
+    "CD210/golden": {
+      "n_pass": 1,
+      "mean": 1.188747576390617,
+      "sd": NaN
+    },
+    "CD210/weak": {
+      "n_pass": 1,
+      "mean": 1.4211866258142702,
+      "sd": NaN
+    },
+    "_pooled_cv": NaN,
+    "_n_per_arm_for_80pct_power_at_threshold": null
+  }
+}

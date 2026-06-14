@@ -1,0 +1,62 @@
+{
+  "CD210/golden_minus_CD210/weak": {
+    "verdict": "INSUFFICIENT_DATA",
+    "why": "too few passes/strata for a causal claim (see ANALYSIS_PLAN \u00a712)",
+    "P1": {
+      "metric": "P1_steer_rms_deg",
+      "comparison": "CD210/golden_minus_CD210/weak",
+      "a": "CD210/weak",
+      "b": "CD210/golden",
+      "n_passes_a": 4,
+      "n_passes_b": 1,
+      "n_strata": 0,
+      "effect": NaN,
+      "base": 0.7516811652509274,
+      "effect_pct": NaN,
+      "sign_consistency": NaN
+    },
+    "P2": {
+      "metric": "P2_curv_rms_1e4",
+      "comparison": "CD210/golden_minus_CD210/weak",
+      "a": "CD210/weak",
+      "b": "CD210/golden",
+      "n_passes_a": 4,
+      "n_passes_b": 1,
+      "n_strata": 0,
+      "effect": NaN,
+      "base": 1.8507414751684135,
+      "effect_pct": NaN,
+      "sign_consistency": NaN
+    }
+  },
+  "OPM7/weak_minus_CD210/weak": {
+    "verdict": "INSUFFICIENT_DATA",
+    "why": "too few passes/strata for a causal claim (see ANALYSIS_PLAN \u00a712)",
+    "P1": {
+      "metric": "P1_steer_rms_deg",
+      "comparison": "OPM7/weak_minus_CD210/weak",
+      "a": "CD210/weak",
+      "b": "OPM7/weak",
+      "n_passes_a": 4,
+      "n_passes_b": 2,
+      "n_strata": 0,
+      "effect": NaN,
+      "base": 0.7516811652509274,
+      "effect_pct": NaN,
+      "sign_consistency": NaN
+    },
+    "P2": {
+      "metric": "P2_curv_rms_1e4",
+      "comparison": "OPM7/weak_minus_CD210/weak",
+      "a": "CD210/weak",
+      "b": "OPM7/weak",
+      "n_passes_a": 4,
+      "n_passes_b": 2,
+      "n_strata": 0,
+      "effect": NaN,
+      "base": 1.8507414751684135,
+      "effect_pct": NaN,
+      "sign_consistency": NaN
+    }
+  }
+}
