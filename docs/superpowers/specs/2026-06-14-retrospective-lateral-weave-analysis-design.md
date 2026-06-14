@@ -289,6 +289,21 @@ A lever is considered root-cause likely only if:
 
 Otherwise, classify the result as `suggestive`, `confounded`, `refuted`, or `controlled_drive_needed`.
 
+## QA Workflow
+
+Every major analysis milestone must include explicit QA, with enough independence to catch both implementation mistakes and framing mistakes.
+
+Required QA gates:
+
+- Cooperative QA pass: after each milestone, run a reviewer that tries to understand the implementation on its own terms, confirm the method matches the design, reproduce representative outputs, and identify missing tests or unclear assumptions.
+- Adversarial QA pass: after cooperative fixes, run a separate reviewer that tries to break the result by looking for confounds, metric leakage, sign mistakes, sample-independence violations, route/date/config mislabeling, and overclaiming.
+- Author reconciliation: the main implementation agent must accept, reject, or modify each QA finding with a concrete reason, then update code/docs/tests as needed.
+- Evidence gate: no result can be called `supported`, `refuted`, or `root-cause likely` until it survives both QA passes or the remaining objection is explicitly documented as residual risk.
+
+Background agents and tasks are authorized for independent work streams such as extractor review, metric review, statistical calibration review, and report review. Subagents must not be used to avoid reading required primary instructions; the main agent remains responsible for interpreting the design and reconciling findings.
+
+For high-impact conclusions, use an additional independent review path when practical. This can include Claude Code or another external agent, given the written spec, generated outputs, and enough reproduction instructions to evaluate the result without relying on this session's assumptions.
+
 ## Regression Guardrails
 
 Although sharp curves are not the primary target, reports must track:
@@ -334,4 +349,3 @@ The design is successful if the eventual implementation can:
 - Localize episodes to pipeline stages with explicit uncertainty.
 - Compare historical models/configs using evidence tiers that distinguish descriptive trends from matched evidence.
 - Identify which questions remain undecidable from existing logs and specify the smallest controlled drive needed to answer them.
-
