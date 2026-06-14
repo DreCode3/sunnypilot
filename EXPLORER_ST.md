@@ -93,7 +93,23 @@ macOS spawn-safe = top-level worker fn + picklable args).
 - Suggestive signals collapse under rigor: assume any exciting result is a speed/route/confound artifact until a
   calibrated, confounded-controlled test survives.
 
-## 6. Documentation map
+## 6. Git — push ONLY to your fork (you are not contributing upstream yet)
+This clone is locked to push **only to your fork** (`github.com/DreCode3/*`); pushes to `upstream` (sunnypilot /
+sunnyhaibin), `commaai`, or `bluepilot` are **blocked**. Three layers enforce it, applied per repo (the main repo +
+each initialized submodule) by [`setup-push-guard.sh`](setup-push-guard.sh):
+1. `remote.pushDefault = origin` → a bare `git push` always goes to your fork.
+2. every non-DreCode3 remote's **push URL** → `DISABLED://…`, so `git push upstream` fails immediately.
+3. a `pre-push` **guard hook** rejects any push to a non-`DreCode3` URL (so even a remote you add later is caught),
+   and preserves Git LFS.
+
+**Day-to-day:** just `git push` (→ your fork). The `opendbc` submodule pushes separately — push it first, then the
+parent: `git -C opendbc_repo push && git push`.
+**⚠️ Fresh clone / new machine:** these settings live in each repo's local `.git` (config + hooks) and are NOT
+committed, so re-apply them once with `./setup-push-guard.sh` (also re-run it after `git submodule update --init` to
+guard newly-initialized submodules). `git push --no-verify` skips the hook, but the disabled upstream URLs still block
+the known upstreams.
+
+## 7. Documentation map
 - **This file** — front door / current state / dev loop.
 - **Architecture & customizations:** [`explorer_st_logs/customizations.md`](explorer_st_logs/customizations.md) (the
   big guide) · [`explorer_st_logs/ford_can_reference.md`](explorer_st_logs/ford_can_reference.md) ·
