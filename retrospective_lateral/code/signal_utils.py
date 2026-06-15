@@ -22,6 +22,8 @@ def fill_guarded(x: np.ndarray, max_gap_samples: int) -> np.ndarray:
   right = np.clip(right, 0, ok.sum() - 1)
   nearest_dist = np.minimum(np.abs(idx - idx[ok][left]), np.abs(idx - idx[ok][right]))
   out[nearest_dist > max_gap_samples] = np.nan
+  out[idx < idx[ok][0]] = np.nan
+  out[idx > idx[ok][-1]] = np.nan
   return out
 
 
@@ -38,17 +40,16 @@ def filter_continuous(x: np.ndarray, fs_hz: float, *, band: tuple[float, float] 
   max_gap_samples = max(1, int(round(max_gap_s * fs_hz)))
   filled = fill_guarded(np.asarray(x, dtype=float), max_gap_samples=max_gap_samples)
   good = np.isfinite(filled)
-  if good.sum() < max(12, int(fs_hz * 3)):
-    return np.full(len(filled), np.nan)
-  src = np.where(good, filled, 0.0)
+  min_samples = max(12, int(fs_hz * 3))
+  out = np.full(len(filled), np.nan)
   if band is not None:
-    y = sosfiltfilt(_sos_band(band[0], band[1], fs_hz), src)
+    sos = _sos_band(band[0], band[1], fs_hz)
   elif lowpass_hz is not None:
-    y = sosfiltfilt(_sos_low(lowpass_hz, fs_hz), src)
+    sos = _sos_low(lowpass_hz, fs_hz)
   else:
     raise ValueError("band or lowpass_hz is required")
-  out = np.full(len(filled), np.nan)
-  out[good] = y[good]
+  for start, end in contiguous_regions(good, min_len=min_samples):
+    out[start:end] = sosfiltfilt(sos, filled[start:end])
   return out
 
 
@@ -97,8 +98,7 @@ def gps_cells(lat_deg: np.ndarray, lon_deg: np.ndarray, cell_m: float) -> np.nda
   ok = np.isfinite(lat) & np.isfinite(lon)
   if ok.sum() == 0:
     return out
-  lat0 = float(np.nanmedian(lat[ok]))
-  x = lon * C.M_PER_DEG_LON_AT_EQUATOR * math.cos(math.radians(lat0))
+  x = lon * C.M_PER_DEG_LON_AT_EQUATOR * np.cos(np.radians(lat))
   y = lat * C.M_PER_DEG_LAT
   gx = np.floor(x / cell_m)
   gy = np.floor(y / cell_m)
@@ -116,9 +116,12 @@ def heading_bin_deg(heading_deg: np.ndarray, bin_deg: float) -> np.ndarray:
 
 def spectral_peak_hz(x: np.ndarray, fs_hz: float, band: tuple[float, float]) -> float:
   vals = np.asarray(x, dtype=float)
-  vals = vals[np.isfinite(vals)]
-  if len(vals) < int(fs_hz * 10):
+  min_samples = int(fs_hz * 10)
+  regions = contiguous_regions(np.isfinite(vals), min_len=min_samples)
+  if len(regions) == 0:
     return math.nan
+  start, end = max(regions, key=lambda region: region[1] - region[0])
+  vals = vals[start:end]
   freqs, power = welch(vals - np.mean(vals), fs=fs_hz, nperseg=min(2048, len(vals)))
   band_mask = (freqs >= band[0]) & (freqs <= band[1])
   if not band_mask.any() or np.nanmax(power[band_mask]) <= 0:
