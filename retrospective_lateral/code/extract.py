@@ -135,3 +135,176 @@ def route_cache_metadata(route_id: str, schema_version: str, segments: int,
     "config_confidence": config_confidence,
     "notes": list(notes),
   }
+
+
+def _as_log_text(log_message: Any) -> str:
+  text = str(log_message)
+  if text.startswith("{"):
+    try:
+      decoded = json.loads(text)
+      return str(decoded.get("msg", text))
+    except Exception:
+      return text
+  return text
+
+
+def extract_route_raw(route: RouteRef) -> tuple[RawChannels, list[str]]:
+  raw = RawChannels()
+  notes: list[str] = []
+  for segment in route.segments:
+    try:
+      for msg in LogReader(str(segment.rlog_path)):
+        which = msg.which()
+        t = msg.logMonoTime * 1e-9
+        if which == "initData" and not raw.init:
+          init = msg.initData
+          raw.init = {"commit": str(init.gitCommit), "branch": str(init.gitBranch), "dirty": bool(init.dirty)}
+        elif which == "carParams" and not raw.car_params:
+          cp = msg.carParams
+          raw.car_params = {
+            "carFingerprint": str(cp.carFingerprint),
+            "wheelbase": float(cp.wheelbase),
+            "steerRatio": float(cp.steerRatio),
+            "steerActuatorDelay": float(cp.steerActuatorDelay),
+          }
+        elif which == "carState":
+          cs = msg.carState
+          raw.add("carState", t, {
+            "v_ego": cs.vEgo,
+            "v_ego_raw": cs.vEgoRaw,
+            "a_ego": cs.aEgo,
+            "steering_angle_deg": cs.steeringAngleDeg,
+            "steering_rate_deg": cs.steeringRateDeg,
+            "steering_torque": cs.steeringTorque,
+            "yaw_rate": cs.yawRate,
+            "steering_pressed": 1.0 if cs.steeringPressed else 0.0,
+            "left_blinker": 1.0 if cs.leftBlinker else 0.0,
+            "right_blinker": 1.0 if cs.rightBlinker else 0.0,
+            "can_valid": 1.0 if cs.canValid else 0.0,
+          })
+        elif which == "carControl":
+          cc = msg.carControl
+          raw.add("carControl", t, {
+            "lat_active": 1.0 if cc.latActive else 0.0,
+            "long_active": 1.0 if cc.longActive else 0.0,
+            "act_curvature": float(cc.actuators.curvature),
+            "current_curvature": float(cc.currentCurvature),
+          })
+        elif which == "controlsState":
+          st = msg.controlsState
+          raw.add("controlsState", t, {
+            "desired_curvature": float(st.desiredCurvature),
+            "controls_curvature": float(st.curvature),
+          })
+        elif which == "modelV2":
+          m = msg.modelV2
+          lane_change = 0 if str(m.meta.laneChangeState) == "off" else 1
+          raw.add("modelV2", t, {
+            "model_y0": _interp_model_xy(m.position.x, m.position.y, 0.0),
+            "model_y20": _interp_model_xy(m.position.x, m.position.y, 20.0),
+            "lane_center_y0": _lane_center(m, 0.0)[0],
+            "lane_center_y20": _lane_center(m, 20.0)[0],
+            "lane_width_y0": _lane_center(m, 0.0)[1],
+            "lane_width_y20": _lane_center(m, 20.0)[1],
+            "lane_prob_left": float(m.laneLineProbs[1]) if len(m.laneLineProbs) > 2 else np.nan,
+            "lane_prob_right": float(m.laneLineProbs[2]) if len(m.laneLineProbs) > 2 else np.nan,
+            "orientation_rate_z0": float(m.orientationRate.z[0]) if len(m.orientationRate.z) else np.nan,
+            "lane_change_state": float(lane_change),
+          })
+        elif which == "liveLocationKalman":
+          loc = msg.liveLocationKalman
+          lat = lon = yaw_cal = roll = pitch = np.nan
+          if loc.positionGeodetic.valid and len(loc.positionGeodetic.value) >= 2:
+            lat = float(loc.positionGeodetic.value[0])
+            lon = float(loc.positionGeodetic.value[1])
+          if loc.angularVelocityCalibrated.valid and len(loc.angularVelocityCalibrated.value) >= 3:
+            yaw_cal = float(loc.angularVelocityCalibrated.value[2])
+          if loc.orientationNED.valid and len(loc.orientationNED.value) >= 2:
+            roll = float(loc.orientationNED.value[0])
+            pitch = float(loc.orientationNED.value[1])
+          raw.add("liveLocationKalman", t, {"lat": lat, "lon": lon, "yaw_rate_calibrated": yaw_cal, "roll": roll, "pitch": pitch})
+        elif which == "liveCalibration":
+          rpy = list(msg.liveCalibration.rpyCalib)
+          raw.add("liveCalibration", t, {
+            "cal_roll": rpy[0] if len(rpy) > 0 else np.nan,
+            "cal_pitch": rpy[1] if len(rpy) > 1 else np.nan,
+            "cal_yaw": rpy[2] if len(rpy) > 2 else np.nan,
+          })
+        elif which == "logMessage":
+          text = _as_log_text(msg.logMessage)
+          raw.log_messages.append((t, text))
+    except Exception as exc:
+      notes.append(f"{segment.rlog_path}: {type(exc).__name__}: {exc}")
+  return raw, notes
+
+
+def _interp_model_xy(xs: Any, ys: Any, xq: float) -> float:
+  x = np.asarray(list(xs), dtype=float)
+  y = np.asarray(list(ys), dtype=float)
+  ok = np.isfinite(x) & np.isfinite(y)
+  if ok.sum() < 2 or xq < np.nanmin(x[ok]) or xq > np.nanmax(x[ok]):
+    return np.nan
+  return float(np.interp(xq, x[ok], y[ok]))
+
+
+def _lane_center(model: Any, xq: float) -> tuple[float, float]:
+  if len(model.laneLines) <= 2:
+    return np.nan, np.nan
+  left = _interp_model_xy(model.laneLines[1].x, model.laneLines[1].y, xq)
+  right = _interp_model_xy(model.laneLines[2].x, model.laneLines[2].y, xq)
+  if not np.isfinite(left) or not np.isfinite(right):
+    return np.nan, np.nan
+  return float(0.5 * (left + right)), float(abs(right - left))
+
+
+def _write_route_cache(route: RouteRef, cache_root: Path, force: bool = False) -> dict[str, Any]:
+  cache_root.mkdir(parents=True, exist_ok=True)
+  out_npz = cache_root / f"{route.route_id}.npz"
+  out_json = cache_root / f"{route.route_id}.json"
+  if out_npz.exists() and out_json.exists() and not force:
+    return json.loads(out_json.read_text())
+  raw, notes = extract_route_raw(route)
+  arrays = resample_channels(raw, fs_hz=C.FS_HZ)
+  lc_rows = [parse_lc_line(text, t) for t, text in raw.log_messages]
+  lc_rows = [row for row in lc_rows if row is not None]
+  evidence = recover_pi_config(
+    offsets=[row.offset_m for row in lc_rows],
+    p_terms=[row.p_term for row in lc_rows],
+    integrals=[row.integral for row in lc_rows],
+    i_terms=[row.i_term for row in lc_rows],
+  )
+  if arrays:
+    np.savez_compressed(out_npz, **arrays)
+  meta = route_cache_metadata(route.route_id, C.CACHE_SCHEMA_VERSION, len(route.segments), evidence.confidence, notes)
+  meta.update({"pi_set": evidence.pi_set, "lc_kp": evidence.lc_kp, "lc_ki": evidence.lc_ki, "init": raw.init, "car_params": raw.car_params})
+  out_json.write_text(json.dumps(meta, indent=2, sort_keys=True))
+  return meta
+
+
+def main(argv: list[str] | None = None) -> int:
+  parser = argparse.ArgumentParser()
+  parser.add_argument("--log-root", type=Path, default=C.DEFAULT_LOG_ROOT)
+  parser.add_argument("--cache-root", type=Path, default=C.DEFAULT_CACHE_ROOT)
+  parser.add_argument("--route", action="append", default=[])
+  parser.add_argument("--list-routes", action="store_true")
+  parser.add_argument("--force", action="store_true")
+  args = parser.parse_args(argv)
+  routes = discover_routes(args.log_root)
+  if args.route:
+    wanted = set(args.route)
+    routes = [r for r in routes if r.route_id in wanted]
+  if args.list_routes:
+    for route in routes:
+      print(json.dumps({"route_id": route.route_id, "segments": len(route.segments), "layout": route.layout}, sort_keys=True))
+    return 0
+  rows = []
+  for route in routes:
+    rows.append(_write_route_cache(route, args.cache_root, force=args.force))
+    print(json.dumps(rows[-1], sort_keys=True))
+  args.cache_root.mkdir(parents=True, exist_ok=True)
+  (args.cache_root / "manifest.json").write_text(json.dumps(rows, indent=2, sort_keys=True))
+  return 0
+
+
+if __name__ == "__main__":
+  raise SystemExit(main())
