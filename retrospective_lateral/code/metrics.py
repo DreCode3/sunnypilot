@@ -34,7 +34,10 @@ class Episode:
   confidence: str
 
   def to_row(self) -> dict[str, object]:
-    return asdict(self)
+    return {
+      key: None if isinstance(value, float) and not math.isfinite(value) else value
+      for key, value in asdict(self).items()
+    }
 
 
 def _flag_radius(seconds: float) -> int:
@@ -43,7 +46,9 @@ def _flag_radius(seconds: float) -> int:
 
 def _base_clean_mask(arrays: dict[str, np.ndarray]) -> np.ndarray:
   n = len(arrays["t"])
-  lat_active = erode_true(arrays.get("lat_active", np.zeros(n)) > 0.5, _flag_radius(C.ENGAGE_ERODE_S))
+  if "lat_active" not in arrays:
+    raise ValueError("lat_active is required for low-speed wheel-swing eligibility")
+  lat_active = erode_true(arrays["lat_active"] > 0.5, _flag_radius(C.ENGAGE_ERODE_S))
   no_override = ~dilate_flags(arrays.get("steering_pressed", np.zeros(n)) > 0.5, _flag_radius(C.OVERRIDE_BUFFER_S))
   no_blinker = ~dilate_flags(arrays.get("blinker", np.zeros(n)) > 0.5, _flag_radius(C.BLINKER_BUFFER_S))
   no_lane_change = ~dilate_flags(arrays.get("lane_change_state", np.zeros(n)) > 0.5, _flag_radius(C.LANE_CHANGE_BUFFER_S))
@@ -83,10 +88,13 @@ def detect_low_speed_wheel_swing(route_id: str, arrays: dict[str, np.ndarray]) -
     path_rms = rms_masked(path_band, mask) * 1e4
     if np.isfinite(cmd_ptp) and cmd_ptp > 0.0005:
       stage = "final_command_or_before"
+      confidence = "supported"
     elif np.isfinite(path_rms) and path_rms > 0.5:
       stage = "actual_path_or_plant"
+      confidence = "supported"
     else:
       stage = "steering_wheel_only"
+      confidence = "steering_only"
     episodes.append(Episode(
       symptom="low_speed_wheel_swing",
       route_id=route_id,
@@ -100,6 +108,6 @@ def detect_low_speed_wheel_swing(route_id: str, arrays: dict[str, np.ndarray]) -
       command_peak_to_peak_curvature=float(cmd_ptp) if np.isfinite(cmd_ptp) else math.nan,
       path_curvature_band_rms_1e4=float(path_rms) if np.isfinite(path_rms) else math.nan,
       stage_first_growth=stage,
-      confidence="supported",
+      confidence=confidence,
     ))
   return sorted(episodes, key=lambda e: e.steering_peak_to_peak_deg, reverse=True)
