@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import re
 from dataclasses import dataclass
@@ -147,43 +148,65 @@ def parse_cp_line(text: str, t: float) -> CPTelemetry | None:
   )
 
 
+def _cx1_payload(text: str) -> str | None:
+  try:
+    decoded = json.loads(text)
+  except json.JSONDecodeError:
+    pass
+  else:
+    if isinstance(decoded, dict) and isinstance(decoded.get("msg"), str):
+      text = decoded["msg"]
+
+  marker = text.find("CX1:")
+  if marker < 0:
+    return None
+  return text[marker:]
+
+
 def parse_cx1_line(text: str) -> CX1Telemetry | None:
-  if not text.startswith("CX1: ") or "SCHEMA=" in text:
+  payload = _cx1_payload(text)
+  if payload is None:
     return None
-  parts = text.split()[1:]
-  if len(parts) != 29:
+  parts = payload.split()[1:]
+  if parts and parts[0].startswith("SCHEMA="):
     return None
-  return CX1Telemetry(
-    frame=int(parts[0]),
-    speed_mps=float(parts[1]),
-    yaw_rate=float(parts[2]),
-    lateral_accel=float(parts[3]),
-    command_curvature=float(parts[4]),
-    command_rate=float(parts[5]),
-    measured_curvature=float(parts[6]),
-    desired_curvature=float(parts[7]),
-    predicted_curvature=float(parts[8]),
-    ema_curvature=float(parts[9]),
-    pre_rate_limit=float(parts[10]),
-    rate_limited=float(parts[11]),
-    command_int=int(parts[12]),
-    rate_int=int(parts[13]),
-    steering_angle_deg=float(parts[14]),
-    steering_rate_deg_s=float(parts[15]),
-    steering_torque=float(parts[16]),
-    override=int(parts[17]),
-    lane_change=int(parts[18]),
-    lookup_time_s=float(parts[19]),
-    blend=float(parts[20]),
-    curvature_factor=float(parts[21]),
-    lane_offset_m=float(parts[22]),
-    integral=float(parts[23]),
-    pred_minus_des=float(parts[24]),
-    burst=int(parts[25]),
-    path4_release=int(parts[26]),
-    smooth_tau_s=float(parts[27]),
-    path4_enabled=int(parts[28]),
-  )
+  if len(parts) < 29:
+    return None
+  parts = parts[:29]
+  try:
+    return CX1Telemetry(
+      frame=int(parts[0]),
+      speed_mps=float(parts[1]),
+      yaw_rate=float(parts[2]),
+      lateral_accel=float(parts[3]),
+      command_curvature=float(parts[4]),
+      command_rate=float(parts[5]),
+      measured_curvature=float(parts[6]),
+      desired_curvature=float(parts[7]),
+      predicted_curvature=float(parts[8]),
+      ema_curvature=float(parts[9]),
+      pre_rate_limit=float(parts[10]),
+      rate_limited=float(parts[11]),
+      command_int=int(parts[12]),
+      rate_int=int(parts[13]),
+      steering_angle_deg=float(parts[14]),
+      steering_rate_deg_s=float(parts[15]),
+      steering_torque=float(parts[16]),
+      override=int(parts[17]),
+      lane_change=int(parts[18]),
+      lookup_time_s=float(parts[19]),
+      blend=float(parts[20]),
+      curvature_factor=float(parts[21]),
+      lane_offset_m=float(parts[22]),
+      integral=float(parts[23]),
+      pred_minus_des=float(parts[24]),
+      burst=int(parts[25]),
+      path4_release=int(parts[26]),
+      smooth_tau_s=float(parts[27]),
+      path4_enabled=int(parts[28]),
+    )
+  except ValueError:
+    return None
 
 
 def _ratios(num: Sequence[float], den: Sequence[float], min_abs_den: float) -> list[float]:
@@ -200,7 +223,7 @@ def recover_pi_config(offsets: Sequence[float], p_terms: Sequence[float],
   ki_ratios = _ratios(i_terms, integrals, min_abs_den=0.02)
   lc_kp = median(kp_ratios) if len(kp_ratios) >= 3 else None
   lc_ki = median(ki_ratios) if len(ki_ratios) >= 3 else None
-  n = min(len(kp_ratios), len(ki_ratios))
+  n = len(kp_ratios)
   if lc_kp is None:
     return ConfigEvidence("unknown", "unknown", None, lc_ki, n, "insufficient LC P/off samples")
   if lc_kp >= 0.0003:

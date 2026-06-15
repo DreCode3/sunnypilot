@@ -9,6 +9,9 @@ from retrospective_lateral.code.telemetry import (
 )
 
 
+CX1_SCHEMA_V1_LINE = "CX1: 100 12.00 +0.01000 +0.120 +0.0010000 +0.0001000 +0.001100 +0.000900 +0.001200 +0.001000 +0.001050 +0.001000 950 4090 +3.00 +1.00 +0.20 0 0 0.500 0.300 1.000 +0.020 +0.3000 +0.000300 0 0 0.0400 0"
+
+
 def test_parse_lc_line_extracts_controller_fields():
   line = "LC: off=0.120 ll=0.100 pos=0.0200 scl=1.00 conf=0.90 wid=3.60 int=0.4000 P=0.000060 I=0.000080 curv=0.001234 spd=24.0"
   row = parse_lc_line(line, t=123.0)
@@ -32,8 +35,7 @@ def test_parse_cp_line_extracts_pipeline_fields():
 
 
 def test_parse_cx1_line_extracts_schema_v1_fields():
-  line = "CX1: 100 12.00 +0.01000 +0.120 +0.0010000 +0.0001000 +0.001100 +0.000900 +0.001200 +0.001000 +0.001050 +0.001000 950 4090 +3.00 +1.00 +0.20 0 0 0.500 0.300 1.000 +0.020 +0.3000 +0.000300 0 0 0.0400 0"
-  row = parse_cx1_line(line)
+  row = parse_cx1_line(CX1_SCHEMA_V1_LINE)
   assert row is not None
   assert row.frame == 100
   assert row.speed_mps == 12.0
@@ -53,3 +55,37 @@ def test_recover_pi_config_from_lc_terms():
   assert evidence.confidence == "proven"
   assert math.isclose(evidence.lc_kp, 0.0005, rel_tol=1e-6)
   assert math.isclose(evidence.lc_ki, 0.0002, rel_tol=1e-6)
+
+
+def test_recover_pi_config_counts_kp_evidence_when_ki_unavailable():
+  evidence = recover_pi_config(
+    offsets=[0.10, -0.20, 0.12],
+    p_terms=[0.00005, -0.00010, 0.00006],
+    integrals=[0.0, 0.001, float("nan")],
+    i_terms=[0.00010, -0.00006, 0.00008],
+  )
+  assert evidence.pi_set == "golden"
+  assert evidence.confidence == "proven"
+  assert evidence.n_samples == 3
+  assert math.isclose(evidence.lc_kp, 0.0005, rel_tol=1e-6)
+  assert evidence.lc_ki is None
+
+
+def test_parse_cx1_line_ignores_appended_fields():
+  row = parse_cx1_line(f"{CX1_SCHEMA_V1_LINE} extra_field 123")
+  assert row is not None
+  assert row.frame == 100
+  assert row.path4_enabled == 0
+
+
+def test_parse_cx1_line_extracts_message_from_json_text():
+  row = parse_cx1_line(f'{{ "msg": "{CX1_SCHEMA_V1_LINE}" }}')
+  assert row is not None
+  assert row.frame == 100
+  assert row.path4_enabled == 0
+
+
+def test_parse_cx1_line_rejects_malformed_or_schema_rows():
+  malformed = CX1_SCHEMA_V1_LINE.replace("+0.0010000", "bad-number", 1)
+  assert parse_cx1_line(malformed) is None
+  assert parse_cx1_line("CX1: SCHEMA=2 fields=extended") is None
