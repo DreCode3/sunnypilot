@@ -25,14 +25,17 @@ from retrospective_lateral.code.telemetry import parse_cp_line, parse_cx1_line, 
 @dataclass
 class RawChannels:
   times: dict[str, list[float]] = field(default_factory=lambda: defaultdict(list))
+  signal_times: dict[str, dict[str, list[float]]] = field(default_factory=lambda: defaultdict(lambda: defaultdict(list)))
   values: dict[str, dict[str, list[float]]] = field(default_factory=lambda: defaultdict(lambda: defaultdict(list)))
   log_messages: list[tuple[float, str]] = field(default_factory=list)
   init: dict[str, Any] = field(default_factory=dict)
   car_params: dict[str, Any] = field(default_factory=dict)
 
   def add(self, family: str, t: float, row: dict[str, float]) -> None:
-    self.times[family].append(float(t))
+    t = float(t)
+    self.times[family].append(t)
     for key, value in row.items():
+      self.signal_times[family][key].append(t)
       self.values[family][key].append(float(value) if value is not None else np.nan)
 
 
@@ -57,7 +60,15 @@ def _nearest_flag(t_src: np.ndarray, y_src: np.ndarray, t_grid: np.ndarray) -> n
   order = np.argsort(t_src)
   t = t_src[order]
   y = y_src[order]
-  idx = np.clip(np.searchsorted(t, t_grid), 0, len(t) - 1)
+  right = np.searchsorted(t, t_grid, side="left")
+  left = right - 1
+  right_idx = np.clip(right, 0, len(t) - 1)
+  left_idx = np.clip(left, 0, len(t) - 1)
+  right_dist = np.abs(t_grid - t[right_idx])
+  left_dist = np.abs(t_grid - t[left_idx])
+  right_dist[right >= len(t)] = np.inf
+  left_dist[left < 0] = np.inf
+  idx = np.where(left_dist <= right_dist, left_idx, right_idx)
   return (y[idx] > 0.5).astype(np.float32)
 
 
@@ -86,13 +97,13 @@ def resample_channels(raw: RawChannels, fs_hz: float = C.FS_HZ) -> dict[str, np.
     "modelV2": ["lane_change_state"],
   }
   for family, keys in mapping.items():
-    t = np.asarray(raw.times.get(family, []), dtype=float)
     for key in keys:
+      t = np.asarray(raw.signal_times.get(family, {}).get(key, []), dtype=float)
       y = np.asarray(raw.values.get(family, {}).get(key, []), dtype=float)
       out[key] = _interp_numeric(t, y, t_grid, fs_hz) if len(y) else np.full_like(t_grid, np.nan, dtype=np.float32)
   for family, keys in flag_mapping.items():
-    t = np.asarray(raw.times.get(family, []), dtype=float)
     for key in keys:
+      t = np.asarray(raw.signal_times.get(family, {}).get(key, []), dtype=float)
       y = np.asarray(raw.values.get(family, {}).get(key, []), dtype=float)
       out[key] = _nearest_flag(t, y, t_grid) if len(y) else np.zeros_like(t_grid, dtype=np.float32)
   out["blinker"] = ((out.get("left_blinker", 0) > 0.5) | (out.get("right_blinker", 0) > 0.5)).astype(np.float32)
