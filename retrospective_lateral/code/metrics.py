@@ -81,7 +81,9 @@ def _base_clean_mask(arrays: dict[str, np.ndarray]) -> np.ndarray:
 
 def _path_curvature(arrays: dict[str, np.ndarray]) -> np.ndarray:
   v = arrays.get("v_ego", np.array([], dtype=float)).astype(float)
-  yaw = arrays.get("yaw_rate_calibrated", arrays.get("yaw_rate", np.full_like(v, np.nan))).astype(float)
+  raw_yaw = arrays.get("yaw_rate", np.full_like(v, np.nan)).astype(float)
+  calibrated_yaw = arrays.get("yaw_rate_calibrated", np.full_like(v, np.nan)).astype(float)
+  yaw = np.where(np.isfinite(calibrated_yaw), calibrated_yaw, raw_yaw)
   return np.divide(yaw, v, out=np.full_like(v, np.nan), where=(v > 1.0) & np.isfinite(yaw))
 
 

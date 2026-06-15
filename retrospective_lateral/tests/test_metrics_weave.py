@@ -37,6 +37,18 @@ def test_detect_weave_windows_finds_path_weave():
   assert worst.stage_first_growth == "controller_or_command"
 
 
+def test_detect_weave_windows_falls_back_to_can_yaw_when_calibrated_yaw_missing():
+  arrays = synthetic_weave_route("command")
+  arrays["yaw_rate_calibrated"] = np.full_like(arrays["t"], np.nan)
+
+  windows = detect_weave_windows("route_test", arrays)
+
+  assert len(windows) >= 1
+  worst = windows[0]
+  assert worst.path_curvature_band_rms_1e4 > 2.0
+  assert worst.stage_first_growth == "controller_or_command"
+
+
 def test_detect_weave_windows_identifies_desired_stage():
   windows = detect_weave_windows("route_test", synthetic_weave_route("desired"))
   assert windows[0].stage_first_growth == "model_or_desired"
