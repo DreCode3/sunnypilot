@@ -26,13 +26,15 @@ def segment_index_from_path(path: Path) -> int:
   modern = re.search(r"--(\d+)/rlog\.zst$", text)
   if modern:
     return int(modern.group(1))
-  flat = re.search(r"rlog_(\d+)\.zst$", text)
+  flat = re.search(r"rlog_(?:seg)?(\d+)\.zst$", text)
   if flat:
     return int(flat.group(1))
   plain = re.search(r"/(\d+)/rlog\.zst$", text)
   if plain:
     return int(plain.group(1))
-  return 0
+  if path.name == "rlog.zst":
+    return 0
+  raise ValueError(f"unsupported rlog path: {path}")
 
 
 def _route_id_from_dir(route_dir: Path) -> str:
@@ -47,12 +49,16 @@ def _modern_segments(route_dir: Path, route_id: str) -> list[SegmentRef]:
 
 
 def _flat_segments(route_dir: Path, route_id: str) -> list[SegmentRef]:
-  out: list[SegmentRef] = []
-  for rlog in route_dir.glob("rlog_*.zst"):
-    out.append(SegmentRef(route_id=route_id, segment_index=segment_index_from_path(rlog), rlog_path=rlog))
+  by_index: dict[int, SegmentRef] = {}
+  for pattern in ("rlog_[0-9]*.zst", "rlog_seg[0-9]*.zst"):
+    for rlog in route_dir.glob(pattern):
+      segment_index = segment_index_from_path(rlog)
+      by_index.setdefault(segment_index, SegmentRef(route_id=route_id, segment_index=segment_index, rlog_path=rlog))
   if (route_dir / "rlog.zst").exists():
-    out.append(SegmentRef(route_id=route_id, segment_index=0, rlog_path=route_dir / "rlog.zst"))
-  return sorted(out, key=lambda s: s.segment_index)
+    rlog = route_dir / "rlog.zst"
+    segment_index = segment_index_from_path(rlog)
+    by_index.setdefault(segment_index, SegmentRef(route_id=route_id, segment_index=segment_index, rlog_path=rlog))
+  return sorted(by_index.values(), key=lambda s: s.segment_index)
 
 
 def discover_routes(root: Path) -> list[RouteRef]:
