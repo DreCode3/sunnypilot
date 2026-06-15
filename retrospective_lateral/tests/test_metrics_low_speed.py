@@ -35,6 +35,23 @@ def test_detect_low_speed_wheel_swing_finds_large_angle_episode():
   assert worst.command_peak_to_peak_curvature > 0.0015
 
 
+def test_detect_low_speed_wheel_swing_uses_non_strong_confidence_with_command_corroboration():
+  episodes = detect_low_speed_wheel_swing("route_test", synthetic_low_speed_route())
+
+  assert len(episodes) >= 1
+  assert episodes[0].stage_first_growth == "final_command_or_before"
+  assert episodes[0].confidence == "command_correlated"
+
+
+def test_detect_low_speed_wheel_swing_confidence_avoids_evidence_gate_terms():
+  episodes = detect_low_speed_wheel_swing("route_test", synthetic_low_speed_route())
+
+  assert episodes
+  assert {episode.confidence for episode in episodes}.isdisjoint(
+    {"supported", "refuted", "root_cause_likely"}
+  )
+
+
 def test_episode_to_row_normalizes_missing_numeric_values_for_strict_json():
   episode = Episode(
     symptom="low_speed_wheel_swing",

@@ -154,10 +154,10 @@ def detect_low_speed_wheel_swing(route_id: str, arrays: dict[str, np.ndarray]) -
     path_rms = rms_masked(path_band, mask) * 1e4
     if np.isfinite(cmd_ptp) and cmd_ptp > 0.0005:
       stage = "final_command_or_before"
-      confidence = "supported"
+      confidence = "command_correlated"
     elif np.isfinite(path_rms) and path_rms > 0.5:
       stage = "actual_path_or_plant"
-      confidence = "supported"
+      confidence = "path_correlated"
     else:
       stage = "steering_wheel_only"
       confidence = "steering_only"
