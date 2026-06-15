@@ -5,6 +5,11 @@ from pathlib import Path
 import pandas as pd
 
 
+def _markdown_cell(value) -> str:
+  text = str(value)
+  return text.replace("\\", "\\\\").replace("|", "\\|").replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+
+
 def _top_rows(df: pd.DataFrame, n: int = 10) -> str:
   if df.empty:
     return "_No rows._"
@@ -12,7 +17,7 @@ def _top_rows(df: pd.DataFrame, n: int = 10) -> str:
   columns = list(view.columns)
   header = "| " + " | ".join(columns) + " |"
   sep = "| " + " | ".join(["---"] * len(columns)) + " |"
-  body = ["| " + " | ".join(str(row[col]) for col in columns) + " |" for _, row in view.iterrows()]
+  body = ["| " + " | ".join(_markdown_cell(row[col]) for col in columns) + " |" for _, row in view.iterrows()]
   return "\n".join([header, sep] + body)
 
 
@@ -20,6 +25,12 @@ def write_markdown_report(out_dir: str | Path, symptom_catalog: pd.DataFrame, sc
   out = Path(out_dir)
   out.mkdir(parents=True, exist_ok=True)
   report = out / "retrospective_lateral_report.md"
+  if "status" in symptom_catalog.columns:
+    symptom_rows = symptom_catalog[symptom_catalog["status"] == "ok"]
+    failure_rows = symptom_catalog[symptom_catalog["status"] != "ok"]
+  else:
+    symptom_rows = symptom_catalog
+    failure_rows = symptom_catalog.iloc[0:0]
   text = "\n".join([
     "# Retrospective Lateral Weave Analysis Report",
     "",
@@ -30,7 +41,11 @@ def write_markdown_report(out_dir: str | Path, symptom_catalog: pd.DataFrame, sc
     "",
     "## Top Symptom Episodes",
     "",
-    _top_rows(symptom_catalog, 10),
+    _top_rows(symptom_rows, 10),
+    "",
+    "## Processing/Data Quality Failures",
+    "",
+    _top_rows(failure_rows, 20),
     "",
     "## Historical Scorecard",
     "",
