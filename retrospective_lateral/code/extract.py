@@ -264,12 +264,33 @@ def _lane_center(model: Any, xq: float) -> tuple[float, float]:
   return float(0.5 * (left + right)), float(abs(right - left))
 
 
+def _cached_sample_count(npz_path: Path) -> int:
+  try:
+    with np.load(npz_path) as data:
+      return int(len(data["t"])) if "t" in data else 0
+  except Exception:
+    return 0
+
+
+def _normalize_cache_metadata(meta: dict[str, Any], out_npz: Path, out_json: Path) -> dict[str, Any]:
+  if "success" in meta and "sample_count" in meta and "npz_path" in meta:
+    return meta
+  sample_count = _cached_sample_count(out_npz)
+  meta.update({
+    "success": sample_count > 0,
+    "sample_count": sample_count,
+    "npz_path": str(out_npz) if sample_count > 0 else None,
+  })
+  out_json.write_text(json.dumps(meta, indent=2, sort_keys=True))
+  return meta
+
+
 def _write_route_cache(route: RouteRef, cache_root: Path, force: bool = False) -> dict[str, Any]:
   cache_root.mkdir(parents=True, exist_ok=True)
   out_npz = cache_root / f"{route.route_id}.npz"
   out_json = cache_root / f"{route.route_id}.json"
   if out_npz.exists() and out_json.exists() and not force:
-    return json.loads(out_json.read_text())
+    return _normalize_cache_metadata(json.loads(out_json.read_text()), out_npz, out_json)
   raw, notes = extract_route_raw(route)
   arrays = resample_channels(raw, fs_hz=C.FS_HZ)
   lc_rows = [parse_lc_line(text, t) for t, text in raw.log_messages]

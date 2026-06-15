@@ -145,3 +145,27 @@ def test_extract_route_raw_continues_after_bad_message(monkeypatch, tmp_path):
 
   assert notes
   assert raw.values["carState"]["v_ego"] == [11.0]
+
+
+def test_write_route_cache_enriches_old_cache_metadata(tmp_path):
+  cache_root = tmp_path / "cache"
+  cache_root.mkdir()
+  t = np.asarray([0.0, 0.05, 0.10], dtype=np.float32)
+  np.savez_compressed(cache_root / "route_old.npz", t=t)
+  old_meta = {
+    "route_id": "route_old",
+    "schema_version": "retrolat-v1",
+    "segments": 1,
+    "config_confidence": "unknown",
+    "notes": [],
+  }
+  (cache_root / "route_old.json").write_text(json.dumps(old_meta))
+  segment = SegmentRef(route_id="route_old", segment_index=0, rlog_path=tmp_path / "rlog.zst")
+  route = RouteRef(route_id="route_old", route_dir=tmp_path, layout="flat", segments=(segment,))
+
+  meta = extract._write_route_cache(route, cache_root, force=False)
+
+  assert meta["success"] is True
+  assert meta["sample_count"] == len(t)
+  assert meta["npz_path"] == str(cache_root / "route_old.npz")
+  assert json.loads((cache_root / "route_old.json").read_text()) == meta
