@@ -40,21 +40,34 @@ class RawChannels:
 
 
 def _interp_numeric(t_src: np.ndarray, y_src: np.ndarray, t_grid: np.ndarray, fs_hz: float) -> np.ndarray:
+  valid = np.isfinite(t_src) & np.isfinite(y_src)
+  t_src = t_src[valid]
+  y_src = y_src[valid]
   if len(t_src) < 2:
     return np.full_like(t_grid, np.nan, dtype=np.float32)
-  order = np.argsort(t_src)
+  order = np.argsort(t_src, kind="stable")
   t = t_src[order]
   y = y_src[order]
+  _, last_idx = np.unique(t[::-1], return_index=True)
+  keep = np.sort(len(t) - 1 - last_idx)
+  t = t[keep]
+  y = y[keep]
+  if len(t) < 2:
+    return np.full_like(t_grid, np.nan, dtype=np.float32)
   out = np.interp(t_grid, t, y, left=np.nan, right=np.nan)
-  sample_gap = np.full_like(t_grid, np.nan, dtype=float)
-  nearest = np.clip(np.searchsorted(t, t_grid), 0, len(t) - 1)
-  prev = np.clip(nearest - 1, 0, len(t) - 1)
-  sample_gap = np.minimum(np.abs(t_grid - t[nearest]), np.abs(t_grid - t[prev]))
-  out[sample_gap > C.MAX_INTERP_GAP_S] = np.nan
+  right = np.searchsorted(t, t_grid, side="left")
+  exact_right = (right < len(t)) & (t[right.clip(max=len(t) - 1)] == t_grid)
+  left = right - 1
+  left_idx = np.clip(left, 0, len(t) - 1)
+  right_idx = np.clip(right, 0, len(t) - 1)
+  bracket_gap = t[right_idx] - t[left_idx]
+  bracketed = (left >= 0) & (right < len(t))
+  out[bracketed & (bracket_gap > C.MAX_INTERP_GAP_S) & ~exact_right] = np.nan
   return out.astype(np.float32)
 
 
-def _nearest_flag(t_src: np.ndarray, y_src: np.ndarray, t_grid: np.ndarray) -> np.ndarray:
+def _nearest_flag(t_src: np.ndarray, y_src: np.ndarray, t_grid: np.ndarray,
+                  max_hold_s: float = C.MAX_INTERP_GAP_S) -> np.ndarray:
   if len(t_src) < 1:
     return np.zeros_like(t_grid, dtype=np.float32)
   order = np.argsort(t_src)
@@ -69,7 +82,10 @@ def _nearest_flag(t_src: np.ndarray, y_src: np.ndarray, t_grid: np.ndarray) -> n
   right_dist[right >= len(t)] = np.inf
   left_dist[left < 0] = np.inf
   idx = np.where(left_dist <= right_dist, left_idx, right_idx)
-  return (y[idx] > 0.5).astype(np.float32)
+  nearest_dist = np.minimum(left_dist, right_dist)
+  out = (y[idx] > 0.5).astype(np.float32)
+  out[nearest_dist > max_hold_s] = 0.0
+  return out
 
 
 def resample_channels(raw: RawChannels, fs_hz: float = C.FS_HZ) -> dict[str, np.ndarray]:

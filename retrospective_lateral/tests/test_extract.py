@@ -20,17 +20,33 @@ def test_resample_channels_outputs_fixed_grid_and_masks_large_gaps():
   assert out["lat_active"][0] == 1.0
 
 
+def test_resample_channels_masks_numeric_samples_across_large_bracket_gaps():
+  raw = RawChannels()
+  raw.add("carState", 0.0, {"v_ego": 10.0})
+  raw.add("carState", 1.5, {"v_ego": 20.0})
+
+  out = resample_channels(raw, fs_hz=2.0)
+
+  assert out["t"].tolist() == [0.0, 0.5, 1.0, 1.5]
+  assert out["v_ego"][0] == 10.0
+  assert np.isnan(out["v_ego"][1])
+  assert np.isnan(out["v_ego"][2])
+  assert out["v_ego"][3] == 20.0
+
+
 def test_resample_channels_handles_sparse_rows_with_per_signal_timestamps():
   raw = RawChannels()
   raw.add("carState", 0.0, {"v_ego": 10.0})
   raw.add("carState", 0.25, {"steering_angle_deg": 2.0})
+  raw.add("carState", 0.5, {"v_ego": 20.0})
   raw.add("carState", 0.75, {"steering_angle_deg": 4.0})
-  raw.add("carState", 1.0, {"v_ego": 20.0})
+  raw.add("carControl", 1.0, {"lat_active": 0.0})
 
   out = resample_channels(raw, fs_hz=4.0)
 
   assert out["t"].tolist() == [0.0, 0.25, 0.5, 0.75, 1.0]
-  assert out["v_ego"].tolist() == [10.0, 12.5, 15.0, 17.5, 20.0]
+  assert out["v_ego"].tolist()[:3] == [10.0, 15.0, 20.0]
+  assert np.isnan(out["v_ego"][3:]).all()
   assert np.isnan(out["steering_angle_deg"][0])
   assert out["steering_angle_deg"][1:4].tolist() == [2.0, 3.0, 4.0]
   assert np.isnan(out["steering_angle_deg"][4])
@@ -47,6 +63,34 @@ def test_nearest_flags_choose_closest_sample():
   assert out["t"][9] == 0.9
   assert out["lat_active"][1] == 0.0
   assert out["lat_active"][9] == 1.0
+
+
+def test_nearest_flags_default_false_when_nearest_sample_is_stale():
+  raw = RawChannels()
+  raw.add("carControl", 0.0, {"lat_active": 1.0})
+  raw.add("carControl", 2.0, {"lat_active": 1.0})
+
+  out = resample_channels(raw, fs_hz=2.0)
+
+  assert out["t"].tolist() == [0.0, 0.5, 1.0, 1.5, 2.0]
+  assert out["lat_active"][0] == 1.0
+  assert out["lat_active"][1] == 1.0
+  assert out["lat_active"][2] == 0.0
+  assert out["lat_active"][3] == 1.0
+  assert out["lat_active"][4] == 1.0
+
+
+def test_resample_channels_filters_non_finite_numeric_sources_and_keeps_last_duplicate():
+  raw = RawChannels()
+  raw.add("carState", 0.0, {"v_ego": 5.0, "a_ego": None})
+  raw.add("carState", 0.0, {"v_ego": 7.0, "a_ego": None})
+  raw.add("carState", 0.25, {"v_ego": np.nan, "a_ego": None})
+  raw.add("carState", 0.5, {"v_ego": 12.0, "a_ego": None})
+
+  out = resample_channels(raw, fs_hz=4.0)
+
+  assert out["v_ego"].tolist() == [7.0, 9.5, 12.0]
+  assert np.isnan(out["a_ego"]).all()
 
 
 def test_route_cache_metadata_is_json_serializable(tmp_path):
