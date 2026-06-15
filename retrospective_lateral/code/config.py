@@ -11,6 +11,7 @@ DEFAULT_REPORT_ROOT = REPO_ROOT / "retrospective_lateral" / "results" / "reports
 
 FS_HZ = 20.0
 MAX_INTERP_GAP_S = 0.5
+TELEMETRY_INTERP_GAP_S = 1.25
 
 LOW_SPEED_MPH = (1.0, 10.0)
 WEAVE_SPEED_MPH = (10.0, 70.0)

@@ -39,7 +39,8 @@ class RawChannels:
       self.values[family][key].append(float(value) if value is not None else np.nan)
 
 
-def _interp_numeric(t_src: np.ndarray, y_src: np.ndarray, t_grid: np.ndarray, fs_hz: float) -> np.ndarray:
+def _interp_numeric(t_src: np.ndarray, y_src: np.ndarray, t_grid: np.ndarray, fs_hz: float,
+                    max_gap_s: float = C.MAX_INTERP_GAP_S) -> np.ndarray:
   valid = np.isfinite(t_src) & np.isfinite(y_src)
   t_src = t_src[valid]
   y_src = y_src[valid]
@@ -62,7 +63,7 @@ def _interp_numeric(t_src: np.ndarray, y_src: np.ndarray, t_grid: np.ndarray, fs
   right_idx = np.clip(right, 0, len(t) - 1)
   bracket_gap = t[right_idx] - t[left_idx]
   bracketed = (left >= 0) & (right < len(t))
-  out[bracketed & (bracket_gap > C.MAX_INTERP_GAP_S) & ~exact_right] = np.nan
+  out[bracketed & (bracket_gap > max_gap_s) & ~exact_right] = np.nan
   return out.astype(np.float32)
 
 
@@ -106,22 +107,40 @@ def resample_channels(raw: RawChannels, fs_hz: float = C.FS_HZ) -> dict[str, np.
     "modelV2": ["model_y0", "model_y20", "lane_center_y0", "lane_center_y20", "lane_width_y0", "lane_width_y20", "lane_prob_left", "lane_prob_right", "orientation_rate_z0"],
     "liveLocationKalman": ["lat", "lon", "yaw_rate_calibrated", "roll", "pitch"],
     "liveCalibration": ["cal_roll", "cal_pitch", "cal_yaw"],
+    "cpTelemetry": [
+      "cp_desired_curvature", "cp_predicted_curvature", "cp_ema_curvature",
+      "cp_pre_rate_limit", "cp_rate_limited", "cp_final_command",
+      "cp_measured_curvature", "cp_steering_angle_deg", "cp_steering_torque",
+    ],
+    "cx1Telemetry": [
+      "cx1_speed_mps", "cx1_yaw_rate", "cx1_lateral_accel",
+      "cx1_command_curvature", "cx1_command_rate", "cx1_measured_curvature",
+      "cx1_desired_curvature", "cx1_predicted_curvature", "cx1_ema_curvature",
+      "cx1_pre_rate_limit", "cx1_rate_limited", "cx1_steering_angle_deg",
+      "cx1_steering_rate_deg_s", "cx1_steering_torque", "cx1_lookup_time_s",
+      "cx1_blend", "cx1_curvature_factor", "cx1_lane_offset_m", "cx1_integral",
+      "cx1_pred_minus_des", "cx1_smooth_tau_s",
+    ],
   }
   flag_mapping = {
     "carState": ["steering_pressed", "left_blinker", "right_blinker", "can_valid"],
     "carControl": ["lat_active", "long_active"],
     "modelV2": ["lane_change_state"],
+    "cpTelemetry": ["cp_override", "cp_reset", "cp_ramp", "cp_rate_limited_flag", "cp_anti_windup"],
+    "cx1Telemetry": ["cx1_override", "cx1_lane_change", "cx1_burst", "cx1_path4_release", "cx1_path4_enabled"],
   }
   for family, keys in mapping.items():
+    max_gap_s = C.TELEMETRY_INTERP_GAP_S if family in {"cpTelemetry", "cx1Telemetry"} else C.MAX_INTERP_GAP_S
     for key in keys:
       t = np.asarray(raw.signal_times.get(family, {}).get(key, []), dtype=float)
       y = np.asarray(raw.values.get(family, {}).get(key, []), dtype=float)
-      out[key] = _interp_numeric(t, y, t_grid, fs_hz) if len(y) else np.full_like(t_grid, np.nan, dtype=np.float32)
+      out[key] = _interp_numeric(t, y, t_grid, fs_hz, max_gap_s=max_gap_s) if len(y) else np.full_like(t_grid, np.nan, dtype=np.float32)
   for family, keys in flag_mapping.items():
+    max_hold_s = C.TELEMETRY_INTERP_GAP_S if family in {"cpTelemetry", "cx1Telemetry"} else C.MAX_INTERP_GAP_S
     for key in keys:
       t = np.asarray(raw.signal_times.get(family, {}).get(key, []), dtype=float)
       y = np.asarray(raw.values.get(family, {}).get(key, []), dtype=float)
-      out[key] = _nearest_flag(t, y, t_grid) if len(y) else np.zeros_like(t_grid, dtype=np.float32)
+      out[key] = _nearest_flag(t, y, t_grid, max_hold_s=max_hold_s) if len(y) else np.zeros_like(t_grid, dtype=np.float32)
   out["blinker"] = ((out.get("left_blinker", 0) > 0.5) | (out.get("right_blinker", 0) > 0.5)).astype(np.float32)
   return out
 
@@ -146,6 +165,58 @@ def _as_log_text(log_message: Any) -> str:
     except Exception:
       return text
   return text
+
+
+def _add_controller_pipeline_telemetry(raw: RawChannels, t: float, text: str) -> None:
+  cp = parse_cp_line(text, t)
+  if cp is not None:
+    raw.add("cpTelemetry", cp.t, {
+      "cp_desired_curvature": cp.desired_curvature,
+      "cp_predicted_curvature": cp.predicted_curvature,
+      "cp_ema_curvature": cp.ema_curvature,
+      "cp_pre_rate_limit": cp.pre_rate_limit,
+      "cp_rate_limited": cp.rate_limited,
+      "cp_final_command": cp.final_command,
+      "cp_measured_curvature": cp.measured_curvature,
+      "cp_steering_angle_deg": cp.steering_angle_deg,
+      "cp_steering_torque": cp.steering_torque,
+      "cp_override": float(cp.override),
+      "cp_reset": float(cp.reset),
+      "cp_ramp": float(cp.ramp),
+      "cp_rate_limited_flag": float(cp.rate_limited_flag),
+      "cp_anti_windup": float(cp.anti_windup),
+    })
+
+  cx1 = parse_cx1_line(text)
+  if cx1 is not None:
+    raw.add("cx1Telemetry", t, {
+      "cx1_speed_mps": cx1.speed_mps,
+      "cx1_yaw_rate": cx1.yaw_rate,
+      "cx1_lateral_accel": cx1.lateral_accel,
+      "cx1_command_curvature": cx1.command_curvature,
+      "cx1_command_rate": cx1.command_rate,
+      "cx1_measured_curvature": cx1.measured_curvature,
+      "cx1_desired_curvature": cx1.desired_curvature,
+      "cx1_predicted_curvature": cx1.predicted_curvature,
+      "cx1_ema_curvature": cx1.ema_curvature,
+      "cx1_pre_rate_limit": cx1.pre_rate_limit,
+      "cx1_rate_limited": cx1.rate_limited,
+      "cx1_steering_angle_deg": cx1.steering_angle_deg,
+      "cx1_steering_rate_deg_s": cx1.steering_rate_deg_s,
+      "cx1_steering_torque": cx1.steering_torque,
+      "cx1_lookup_time_s": cx1.lookup_time_s,
+      "cx1_blend": cx1.blend,
+      "cx1_curvature_factor": cx1.curvature_factor,
+      "cx1_lane_offset_m": cx1.lane_offset_m,
+      "cx1_integral": cx1.integral,
+      "cx1_pred_minus_des": cx1.pred_minus_des,
+      "cx1_smooth_tau_s": cx1.smooth_tau_s,
+      "cx1_override": float(cx1.override),
+      "cx1_lane_change": float(cx1.lane_change),
+      "cx1_burst": float(cx1.burst),
+      "cx1_path4_release": float(cx1.path4_release),
+      "cx1_path4_enabled": float(cx1.path4_enabled),
+    })
 
 
 def _extract_message(raw: RawChannels, msg: Any) -> None:
@@ -228,6 +299,7 @@ def _extract_message(raw: RawChannels, msg: Any) -> None:
   elif which == "logMessage":
     text = _as_log_text(msg.logMessage)
     raw.log_messages.append((t, text))
+    _add_controller_pipeline_telemetry(raw, t, text)
 
 
 def extract_route_raw(route: RouteRef) -> tuple[RawChannels, list[str]]:

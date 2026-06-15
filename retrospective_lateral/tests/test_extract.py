@@ -9,6 +9,33 @@ from retrospective_lateral.code.extract import RawChannels, resample_channels, r
 from retrospective_lateral.code.routes import RouteRef, SegmentRef
 
 
+def _log_message(t_s, text):
+  return SimpleNamespace(
+    logMonoTime=int(t_s * 1_000_000_000),
+    which=lambda: "logMessage",
+    logMessage=text,
+  )
+
+
+def _cp_line(final_command, *, pre_rate_limit=None, rate_limited=None):
+  pre_rate_limit = final_command if pre_rate_limit is None else pre_rate_limit
+  rate_limited = final_command if rate_limited is None else rate_limited
+  return (
+    "CP: des=0.000100 pred=0.000200 ema=0.000300 "
+    f"preRL={pre_rate_limit:.6f} RL={rate_limited:.6f} send={final_command:.6f} meas=0.000400 "
+    "| ovr=0 rst=0 ramp=0 rlClip=1 aw=0 | ang=1.0 tq=0.02"
+  )
+
+
+def _cx1_line(frame, command_curvature, *, blend):
+  return (
+    f"CX1: {frame:d} 12.00 +0.01000 +0.120 {command_curvature:+.7f} +0.0001000 "
+    "+0.001100 +0.000900 +0.001200 +0.001000 +0.001050 +0.001000 "
+    "950 4090 +3.00 +1.00 +0.20 0 1 0.500 "
+    f"{blend:.3f} 1.000 +0.020 +0.3000 +0.000300 1 0 0.0400 1"
+  )
+
+
 def test_resample_channels_outputs_fixed_grid_and_masks_large_gaps():
   raw = RawChannels()
   raw.add("carState", 0.0, {"v_ego": 10.0, "steering_angle_deg": 0.0, "yaw_rate": 0.0})
@@ -169,3 +196,56 @@ def test_write_route_cache_enriches_old_cache_metadata(tmp_path):
   assert meta["sample_count"] == len(t)
   assert meta["npz_path"] == str(cache_root / "route_old.npz")
   assert json.loads((cache_root / "route_old.json").read_text()) == meta
+
+
+def test_write_route_cache_resamples_cp_and_cx1_log_message_channels(monkeypatch, tmp_path):
+  raw = RawChannels()
+  raw.add("carState", 0.0, {"v_ego": 12.0})
+  raw.add("carState", 0.1, {"v_ego": 12.0})
+  extract._extract_message(raw, _log_message(0.0, _cp_line(0.0010, pre_rate_limit=0.0012, rate_limited=0.0011)))
+  extract._extract_message(raw, _log_message(0.1, _cp_line(0.0020, pre_rate_limit=0.0022, rate_limited=0.0021)))
+  extract._extract_message(raw, _log_message(0.0, _cx1_line(10, 0.0030, blend=0.25)))
+  extract._extract_message(raw, _log_message(0.1, _cx1_line(11, 0.0040, blend=0.75)))
+  monkeypatch.setattr(extract, "extract_route_raw", lambda _: (raw, []))
+  segment = SegmentRef(route_id="route_unit", segment_index=0, rlog_path=tmp_path / "rlog.zst")
+  route = RouteRef(route_id="route_unit", route_dir=tmp_path, layout="flat", segments=(segment,))
+
+  meta = extract._write_route_cache(route, tmp_path / "cache", force=True)
+
+  with np.load(meta["npz_path"]) as data:
+    for key in (
+      "cp_final_command",
+      "cp_pre_rate_limit",
+      "cp_rate_limited",
+      "cp_ema_curvature",
+      "cp_predicted_curvature",
+      "cp_rate_limited_flag",
+      "cx1_command_curvature",
+      "cx1_pre_rate_limit",
+      "cx1_rate_limited",
+      "cx1_ema_curvature",
+      "cx1_predicted_curvature",
+      "cx1_blend",
+      "cx1_lane_change",
+    ):
+      assert key in data.files
+      assert data[key].shape == data["t"].shape
+    np.testing.assert_allclose(data["cp_final_command"], [0.0010, 0.0015, 0.0020], rtol=1e-5)
+    np.testing.assert_allclose(data["cp_pre_rate_limit"], [0.0012, 0.0017, 0.0022], rtol=1e-5)
+    np.testing.assert_allclose(data["cx1_command_curvature"], [0.0030, 0.0035, 0.0040], rtol=1e-5)
+    np.testing.assert_allclose(data["cx1_blend"], [0.25, 0.50, 0.75], rtol=1e-5)
+    assert data["cp_rate_limited_flag"].tolist() == [1.0, 1.0, 1.0]
+    assert data["cx1_lane_change"].tolist() == [1.0, 1.0, 1.0]
+
+
+def test_resample_channels_interpolates_sparse_cp_telemetry_between_one_hz_samples():
+  raw = RawChannels()
+  raw.add("carState", 0.0, {"v_ego": 12.0})
+  raw.add("carState", 1.0, {"v_ego": 12.0})
+  extract._extract_message(raw, _log_message(0.0, _cp_line(0.0010)))
+  extract._extract_message(raw, _log_message(1.0, _cp_line(0.0020)))
+
+  out = resample_channels(raw, fs_hz=2.0)
+
+  assert out["t"].tolist() == [0.0, 0.5, 1.0]
+  np.testing.assert_allclose(out["cp_final_command"], [0.0010, 0.0015, 0.0020], rtol=1e-5)

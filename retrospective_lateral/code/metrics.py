@@ -17,6 +17,27 @@ from retrospective_lateral.code.signal_utils import (
 )
 
 
+CURVATURE_STAGE_CANDIDATES = (
+  ("desired_curvature", "model_or_desired", "desiredCurvature"),
+  ("cp_desired_curvature", "cp_desired_curvature", "CP desired_curvature"),
+  ("cx1_desired_curvature", "cx1_desired_curvature", "CX1 desired_curvature"),
+  ("cp_predicted_curvature", "cp_predicted_curvature", "CP predicted_curvature"),
+  ("cx1_predicted_curvature", "cx1_predicted_curvature", "CX1 predicted_curvature"),
+  ("cp_ema_curvature", "cp_ema_curvature", "CP ema_curvature"),
+  ("cx1_ema_curvature", "cx1_ema_curvature", "CX1 ema_curvature"),
+  ("cp_pre_rate_limit", "cp_pre_rate_limit", "CP pre_rate_limit"),
+  ("cx1_pre_rate_limit", "cx1_pre_rate_limit", "CX1 pre_rate_limit"),
+  ("cp_rate_limited", "cp_rate_limited", "CP rate_limited"),
+  ("cx1_rate_limited", "cx1_rate_limited", "CX1 rate_limited"),
+  ("cp_final_command", "cp_final_command", "CP final_command"),
+  ("cx1_command_curvature", "cx1_command_curvature", "CX1 command_curvature"),
+  ("act_curvature", "controller_or_command", "final command"),
+)
+
+COMMAND_STAGE_KEYS = ("cp_final_command", "cx1_command_curvature", "act_curvature")
+DESIRED_STAGE_KEYS = ("desired_curvature", "cp_desired_curvature", "cx1_desired_curvature")
+
+
 @dataclass(frozen=True)
 class Episode:
   symptom: str
@@ -113,13 +134,46 @@ def _path_curvature(arrays: dict[str, np.ndarray]) -> np.ndarray:
   return np.divide(yaw, v, out=np.full_like(v, np.nan), where=(v > 1.0) & np.isfinite(yaw))
 
 
-def _stage_label(path_rms: float, steer_rms: float, cmd_rms: float, des_rms: float, model_rms: float) -> tuple[str, str]:
+def _filter_metric_signal(x: np.ndarray, eligible: np.ndarray, *, band: tuple[float, float] | None = None,
+                          lowpass_hz: float | None = None) -> np.ndarray:
+  src = np.asarray(x, dtype=float).copy()
+  src[~np.asarray(eligible, dtype=bool)] = np.nan
+  return filter_continuous(src, C.FS_HZ, band=band, lowpass_hz=lowpass_hz)
+
+
+def _stage_bands(arrays: dict[str, np.ndarray], eligible: np.ndarray) -> dict[str, np.ndarray]:
+  bands: dict[str, np.ndarray] = {}
+  for key, _, _ in CURVATURE_STAGE_CANDIDATES:
+    if key in arrays:
+      bands[key] = _filter_metric_signal(arrays[key].astype(float), eligible, band=C.DEFAULT_WEAVE_BAND_HZ)
+  if "model_y20" in arrays:
+    bands["model_y20"] = _filter_metric_signal(arrays["model_y20"].astype(float), eligible, band=C.DEFAULT_WEAVE_BAND_HZ)
+  return bands
+
+
+def _stage_rms_values(stage_bands: dict[str, np.ndarray], mask: np.ndarray) -> dict[str, float]:
+  values: dict[str, float] = {}
+  for key, band in stage_bands.items():
+    scale = 1.0 if key == "model_y20" else 1e4
+    values[key] = rms_masked(band, mask) * scale
+  return values
+
+
+def _best_rms(values: dict[str, float], keys: tuple[str, ...]) -> float:
+  finite = [values[key] for key in keys if key in values and np.isfinite(values[key])]
+  if not finite:
+    return math.nan
+  return float(max(finite))
+
+
+def _stage_label(path_rms: float, steer_rms: float, stage_rms: dict[str, float]) -> tuple[str, str]:
+  model_rms = stage_rms.get("model_y20", math.nan)
   if np.isfinite(model_rms) and model_rms > 0.02:
     return "model_or_desired", "model path y20 contains slow-band motion"
-  if np.isfinite(des_rms) and des_rms >= 0.5 * max(path_rms, 1e-9):
-    return "model_or_desired", "desiredCurvature contains comparable slow-band motion"
-  if np.isfinite(cmd_rms) and cmd_rms >= 0.5 * max(path_rms, 1e-9):
-    return "controller_or_command", "final command contains comparable slow-band motion"
+  for key, label, note_name in CURVATURE_STAGE_CANDIDATES:
+    rms = stage_rms.get(key, math.nan)
+    if np.isfinite(rms) and rms >= 0.5 * max(path_rms, 1e-9):
+      return label, f"{note_name} contains comparable slow-band motion"
   if np.isfinite(path_rms) and path_rms > 0.5:
     return "actual_path_or_plant", "actual path contains slow-band motion not obvious in command"
   if np.isfinite(steer_rms) and steer_rms > 0.2:
@@ -138,8 +192,8 @@ def detect_low_speed_wheel_swing(route_id: str, arrays: dict[str, np.ndarray]) -
   steer_rate = arrays.get("steering_rate_deg", np.gradient(steer, 1.0 / C.FS_HZ)).astype(float)
   command = arrays.get("act_curvature", np.full_like(steer, np.nan)).astype(float)
   path_curv = _path_curvature(arrays)
-  steer_band = filter_continuous(steer, C.FS_HZ, band=C.LOW_SPEED_INSPECT_BAND_HZ)
-  path_band = filter_continuous(path_curv, C.FS_HZ, band=C.LOW_SPEED_INSPECT_BAND_HZ)
+  steer_band = _filter_metric_signal(steer, eligible, band=C.LOW_SPEED_INSPECT_BAND_HZ)
+  path_band = _filter_metric_signal(path_curv, eligible, band=C.LOW_SPEED_INSPECT_BAND_HZ)
 
   episodes: list[Episode] = []
   for start, end in contiguous_regions(eligible, min_len=min_len):
@@ -185,17 +239,16 @@ def detect_weave_windows(route_id: str, arrays: dict[str, np.ndarray]) -> list[W
   clean = _base_clean_mask(arrays)
   speed_gate = (speed_mph >= C.WEAVE_SPEED_MPH[0]) & (speed_mph <= C.WEAVE_SPEED_MPH[1])
   path_curv = _path_curvature(arrays)
-  road_lp = filter_continuous(path_curv, C.FS_HZ, lowpass_hz=C.ROAD_LP_HZ)
+  prelim_eligible = clean & speed_gate & np.isfinite(path_curv)
+  road_lp = _filter_metric_signal(path_curv, prelim_eligible, lowpass_hz=C.ROAD_LP_HZ)
   gentle = np.abs(road_lp) <= C.ROAD_CURV_ABS_MAX_1PM
-  eligible = clean & speed_gate & gentle & np.isfinite(path_curv)
+  eligible = prelim_eligible & gentle
   window_len = int(round(C.WEAVE_WINDOW_S * C.FS_HZ))
   min_eligible = int(round(C.MIN_WEAVE_ELIGIBLE_S * C.FS_HZ))
 
-  path_band = filter_continuous(path_curv, C.FS_HZ, band=C.DEFAULT_WEAVE_BAND_HZ)
-  steer_band = filter_continuous(arrays["steering_angle_deg"].astype(float), C.FS_HZ, band=C.DEFAULT_WEAVE_BAND_HZ)
-  cmd_band = filter_continuous(arrays.get("act_curvature", np.full_like(path_curv, np.nan)).astype(float), C.FS_HZ, band=C.DEFAULT_WEAVE_BAND_HZ)
-  des_band = filter_continuous(arrays.get("desired_curvature", np.full_like(path_curv, np.nan)).astype(float), C.FS_HZ, band=C.DEFAULT_WEAVE_BAND_HZ)
-  model_band = filter_continuous(arrays.get("model_y20", np.full_like(path_curv, np.nan)).astype(float), C.FS_HZ, band=C.DEFAULT_WEAVE_BAND_HZ)
+  path_band = _filter_metric_signal(path_curv, eligible, band=C.DEFAULT_WEAVE_BAND_HZ)
+  steer_band = _filter_metric_signal(arrays["steering_angle_deg"].astype(float), eligible, band=C.DEFAULT_WEAVE_BAND_HZ)
+  stage_bands = _stage_bands(arrays, eligible)
 
   windows: list[WeaveWindow] = []
   for start in range(0, max(0, len(t) - window_len + 1), window_len):
@@ -208,16 +261,18 @@ def detect_weave_windows(route_id: str, arrays: dict[str, np.ndarray]) -> list[W
     steer_rms = rms_masked(steer_band, mask)
     if not np.isfinite(path_rms) or path_rms < 0.2:
       continue
-    cmd_rms = rms_masked(cmd_band, mask) * 1e4
-    des_rms = rms_masked(des_band, mask) * 1e4
-    model_rms = rms_masked(model_band, mask)
-    stage, note = _stage_label(path_rms, steer_rms, cmd_rms, des_rms, model_rms)
+    stage_rms = _stage_rms_values(stage_bands, mask)
+    cmd_rms = _best_rms(stage_rms, COMMAND_STAGE_KEYS)
+    des_rms = _best_rms(stage_rms, DESIRED_STAGE_KEYS)
+    model_rms = stage_rms.get("model_y20", math.nan)
+    stage, note = _stage_label(path_rms, steer_rms, stage_rms)
     peak_hz = spectral_peak_hz(np.where(mask, path_band, np.nan), C.FS_HZ, C.DEFAULT_WEAVE_BAND_HZ)
+    eligible_idx = np.flatnonzero(mask)
     windows.append(WeaveWindow(
       symptom="weave_10_70",
       route_id=route_id,
-      start_s=float(t[start]),
-      end_s=float(t[end - 1]),
+      start_s=float(t[eligible_idx[0]]),
+      end_s=float(t[eligible_idx[-1]]),
       speed_mph_median=float(np.nanmedian(speed_mph[mask])),
       path_curvature_band_rms_1e4=float(path_rms),
       steering_band_rms_deg=float(steer_rms) if np.isfinite(steer_rms) else math.nan,

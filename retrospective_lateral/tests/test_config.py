@@ -19,3 +19,4 @@ def test_schema_and_metric_constants_are_explicit():
   assert C.DEFAULT_WEAVE_BAND_HZ == (0.10, 0.35)
   assert C.HUNT_GUARD_BAND_HZ == (0.50, 1.50)
   assert C.MAX_INTERP_GAP_S == 0.5
+  assert C.TELEMETRY_INTERP_GAP_S == 1.25
