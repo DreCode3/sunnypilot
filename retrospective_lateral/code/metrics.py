@@ -204,3 +204,47 @@ def detect_weave_windows(route_id: str, arrays: dict[str, np.ndarray]) -> list[W
       evidence_note=note,
     ))
   return sorted(windows, key=lambda w: w.path_curvature_band_rms_1e4, reverse=True)
+
+
+def _load_npz(path: str) -> dict[str, np.ndarray]:
+  data = np.load(path)
+  return {key: data[key] for key in data.files}
+
+
+def write_symptom_catalog(cache_root: str, out_dir: str) -> list[dict[str, object]]:
+  import csv
+  from pathlib import Path
+
+  cache = Path(cache_root)
+  out = Path(out_dir)
+  out.mkdir(parents=True, exist_ok=True)
+  rows: list[dict[str, object]] = []
+  for npz in sorted(cache.glob("route_*.npz")):
+    route_id = npz.stem
+    arrays = _load_npz(str(npz))
+    rows.extend(ep.to_row() for ep in detect_low_speed_wheel_swing(route_id, arrays))
+    rows.extend(win.to_row() for win in detect_weave_windows(route_id, arrays))
+  fieldnames = sorted({key for row in rows for key in row})
+  catalog = out / "symptom_catalog.csv"
+  with catalog.open("w", newline="") as fh:
+    writer = csv.DictWriter(fh, fieldnames=fieldnames)
+    writer.writeheader()
+    for row in rows:
+      writer.writerow(row)
+  return rows
+
+
+def main(argv: list[str] | None = None) -> int:
+  import argparse
+
+  parser = argparse.ArgumentParser()
+  parser.add_argument("--cache-root", required=True)
+  parser.add_argument("--out", required=True)
+  args = parser.parse_args(argv)
+  rows = write_symptom_catalog(args.cache_root, args.out)
+  print(f"wrote {len(rows)} symptom rows to {args.out}/symptom_catalog.csv")
+  return 0
+
+
+if __name__ == "__main__":
+  raise SystemExit(main())
