@@ -64,6 +64,32 @@ class WeaveWindow:
     }
 
 
+SYMPTOM_CATALOG_FIELDS = (
+  "route_id",
+  "symptom",
+  "status",
+  "error_type",
+  "error_message",
+  "start_s",
+  "end_s",
+  "peak_s",
+  "speed_mph_median",
+  "steering_peak_to_peak_deg",
+  "steering_rate_rms_deg_s",
+  "steering_band_rms_deg",
+  "command_peak_to_peak_curvature",
+  "path_curvature_band_rms_1e4",
+  "stage_first_growth",
+  "confidence",
+  "command_band_rms_1e4",
+  "desired_band_rms_1e4",
+  "model_y20_band_rms_m",
+  "steer_per_path",
+  "spectral_peak_hz",
+  "evidence_note",
+)
+
+
 def _flag_radius(seconds: float) -> int:
   return int(round(seconds * C.FS_HZ))
 
@@ -207,8 +233,27 @@ def detect_weave_windows(route_id: str, arrays: dict[str, np.ndarray]) -> list[W
 
 
 def _load_npz(path: str) -> dict[str, np.ndarray]:
-  data = np.load(path)
-  return {key: data[key] for key in data.files}
+  with np.load(path) as data:
+    return {key: data[key] for key in data.files}
+
+
+def _catalog_success_row(row: dict[str, object]) -> dict[str, object]:
+  return {
+    **row,
+    "status": "ok",
+    "error_type": "",
+    "error_message": "",
+  }
+
+
+def _catalog_failure_row(route_id: str, exc: Exception) -> dict[str, object]:
+  return {
+    "route_id": route_id,
+    "symptom": "route_error",
+    "status": "failed",
+    "error_type": type(exc).__name__,
+    "error_message": str(exc),
+  }
 
 
 def write_symptom_catalog(cache_root: str, out_dir: str) -> list[dict[str, object]]:
@@ -221,13 +266,17 @@ def write_symptom_catalog(cache_root: str, out_dir: str) -> list[dict[str, objec
   rows: list[dict[str, object]] = []
   for npz in sorted(cache.glob("route_*.npz")):
     route_id = npz.stem
-    arrays = _load_npz(str(npz))
-    rows.extend(ep.to_row() for ep in detect_low_speed_wheel_swing(route_id, arrays))
-    rows.extend(win.to_row() for win in detect_weave_windows(route_id, arrays))
-  fieldnames = sorted({key for row in rows for key in row})
+    try:
+      arrays = _load_npz(str(npz))
+      route_rows: list[dict[str, object]] = []
+      route_rows.extend(_catalog_success_row(ep.to_row()) for ep in detect_low_speed_wheel_swing(route_id, arrays))
+      route_rows.extend(_catalog_success_row(win.to_row()) for win in detect_weave_windows(route_id, arrays))
+      rows.extend(route_rows)
+    except Exception as exc:
+      rows.append(_catalog_failure_row(route_id, exc))
   catalog = out / "symptom_catalog.csv"
   with catalog.open("w", newline="") as fh:
-    writer = csv.DictWriter(fh, fieldnames=fieldnames)
+    writer = csv.DictWriter(fh, fieldnames=SYMPTOM_CATALOG_FIELDS, extrasaction="ignore")
     writer.writeheader()
     for row in rows:
       writer.writerow(row)
