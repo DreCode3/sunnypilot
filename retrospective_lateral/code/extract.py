@@ -148,91 +148,98 @@ def _as_log_text(log_message: Any) -> str:
   return text
 
 
+def _extract_message(raw: RawChannels, msg: Any) -> None:
+  which = msg.which()
+  t = msg.logMonoTime * 1e-9
+  if which == "initData" and not raw.init:
+    init = msg.initData
+    raw.init = {"commit": str(init.gitCommit), "branch": str(init.gitBranch), "dirty": bool(init.dirty)}
+  elif which == "carParams" and not raw.car_params:
+    cp = msg.carParams
+    raw.car_params = {
+      "carFingerprint": str(cp.carFingerprint),
+      "wheelbase": float(cp.wheelbase),
+      "steerRatio": float(cp.steerRatio),
+      "steerActuatorDelay": float(cp.steerActuatorDelay),
+    }
+  elif which == "carState":
+    cs = msg.carState
+    raw.add("carState", t, {
+      "v_ego": cs.vEgo,
+      "v_ego_raw": cs.vEgoRaw,
+      "a_ego": cs.aEgo,
+      "steering_angle_deg": cs.steeringAngleDeg,
+      "steering_rate_deg": cs.steeringRateDeg,
+      "steering_torque": cs.steeringTorque,
+      "yaw_rate": cs.yawRate,
+      "steering_pressed": 1.0 if cs.steeringPressed else 0.0,
+      "left_blinker": 1.0 if cs.leftBlinker else 0.0,
+      "right_blinker": 1.0 if cs.rightBlinker else 0.0,
+      "can_valid": 1.0 if cs.canValid else 0.0,
+    })
+  elif which == "carControl":
+    cc = msg.carControl
+    raw.add("carControl", t, {
+      "lat_active": 1.0 if cc.latActive else 0.0,
+      "long_active": 1.0 if cc.longActive else 0.0,
+      "act_curvature": float(cc.actuators.curvature),
+      "current_curvature": float(cc.currentCurvature),
+    })
+  elif which == "controlsState":
+    st = msg.controlsState
+    raw.add("controlsState", t, {
+      "desired_curvature": float(st.desiredCurvature),
+      "controls_curvature": float(st.curvature),
+    })
+  elif which == "modelV2":
+    m = msg.modelV2
+    lane_change = 0 if str(m.meta.laneChangeState) == "off" else 1
+    raw.add("modelV2", t, {
+      "model_y0": _interp_model_xy(m.position.x, m.position.y, 0.0),
+      "model_y20": _interp_model_xy(m.position.x, m.position.y, 20.0),
+      "lane_center_y0": _lane_center(m, 0.0)[0],
+      "lane_center_y20": _lane_center(m, 20.0)[0],
+      "lane_width_y0": _lane_center(m, 0.0)[1],
+      "lane_width_y20": _lane_center(m, 20.0)[1],
+      "lane_prob_left": float(m.laneLineProbs[1]) if len(m.laneLineProbs) > 2 else np.nan,
+      "lane_prob_right": float(m.laneLineProbs[2]) if len(m.laneLineProbs) > 2 else np.nan,
+      "orientation_rate_z0": float(m.orientationRate.z[0]) if len(m.orientationRate.z) else np.nan,
+      "lane_change_state": float(lane_change),
+    })
+  elif which == "liveLocationKalman":
+    loc = msg.liveLocationKalman
+    lat = lon = yaw_cal = roll = pitch = np.nan
+    if loc.positionGeodetic.valid and len(loc.positionGeodetic.value) >= 2:
+      lat = float(loc.positionGeodetic.value[0])
+      lon = float(loc.positionGeodetic.value[1])
+    if loc.angularVelocityCalibrated.valid and len(loc.angularVelocityCalibrated.value) >= 3:
+      yaw_cal = float(loc.angularVelocityCalibrated.value[2])
+    if loc.orientationNED.valid and len(loc.orientationNED.value) >= 2:
+      roll = float(loc.orientationNED.value[0])
+      pitch = float(loc.orientationNED.value[1])
+    raw.add("liveLocationKalman", t, {"lat": lat, "lon": lon, "yaw_rate_calibrated": yaw_cal, "roll": roll, "pitch": pitch})
+  elif which == "liveCalibration":
+    rpy = list(msg.liveCalibration.rpyCalib)
+    raw.add("liveCalibration", t, {
+      "cal_roll": rpy[0] if len(rpy) > 0 else np.nan,
+      "cal_pitch": rpy[1] if len(rpy) > 1 else np.nan,
+      "cal_yaw": rpy[2] if len(rpy) > 2 else np.nan,
+    })
+  elif which == "logMessage":
+    text = _as_log_text(msg.logMessage)
+    raw.log_messages.append((t, text))
+
+
 def extract_route_raw(route: RouteRef) -> tuple[RawChannels, list[str]]:
   raw = RawChannels()
   notes: list[str] = []
   for segment in route.segments:
     try:
       for msg in LogReader(str(segment.rlog_path)):
-        which = msg.which()
-        t = msg.logMonoTime * 1e-9
-        if which == "initData" and not raw.init:
-          init = msg.initData
-          raw.init = {"commit": str(init.gitCommit), "branch": str(init.gitBranch), "dirty": bool(init.dirty)}
-        elif which == "carParams" and not raw.car_params:
-          cp = msg.carParams
-          raw.car_params = {
-            "carFingerprint": str(cp.carFingerprint),
-            "wheelbase": float(cp.wheelbase),
-            "steerRatio": float(cp.steerRatio),
-            "steerActuatorDelay": float(cp.steerActuatorDelay),
-          }
-        elif which == "carState":
-          cs = msg.carState
-          raw.add("carState", t, {
-            "v_ego": cs.vEgo,
-            "v_ego_raw": cs.vEgoRaw,
-            "a_ego": cs.aEgo,
-            "steering_angle_deg": cs.steeringAngleDeg,
-            "steering_rate_deg": cs.steeringRateDeg,
-            "steering_torque": cs.steeringTorque,
-            "yaw_rate": cs.yawRate,
-            "steering_pressed": 1.0 if cs.steeringPressed else 0.0,
-            "left_blinker": 1.0 if cs.leftBlinker else 0.0,
-            "right_blinker": 1.0 if cs.rightBlinker else 0.0,
-            "can_valid": 1.0 if cs.canValid else 0.0,
-          })
-        elif which == "carControl":
-          cc = msg.carControl
-          raw.add("carControl", t, {
-            "lat_active": 1.0 if cc.latActive else 0.0,
-            "long_active": 1.0 if cc.longActive else 0.0,
-            "act_curvature": float(cc.actuators.curvature),
-            "current_curvature": float(cc.currentCurvature),
-          })
-        elif which == "controlsState":
-          st = msg.controlsState
-          raw.add("controlsState", t, {
-            "desired_curvature": float(st.desiredCurvature),
-            "controls_curvature": float(st.curvature),
-          })
-        elif which == "modelV2":
-          m = msg.modelV2
-          lane_change = 0 if str(m.meta.laneChangeState) == "off" else 1
-          raw.add("modelV2", t, {
-            "model_y0": _interp_model_xy(m.position.x, m.position.y, 0.0),
-            "model_y20": _interp_model_xy(m.position.x, m.position.y, 20.0),
-            "lane_center_y0": _lane_center(m, 0.0)[0],
-            "lane_center_y20": _lane_center(m, 20.0)[0],
-            "lane_width_y0": _lane_center(m, 0.0)[1],
-            "lane_width_y20": _lane_center(m, 20.0)[1],
-            "lane_prob_left": float(m.laneLineProbs[1]) if len(m.laneLineProbs) > 2 else np.nan,
-            "lane_prob_right": float(m.laneLineProbs[2]) if len(m.laneLineProbs) > 2 else np.nan,
-            "orientation_rate_z0": float(m.orientationRate.z[0]) if len(m.orientationRate.z) else np.nan,
-            "lane_change_state": float(lane_change),
-          })
-        elif which == "liveLocationKalman":
-          loc = msg.liveLocationKalman
-          lat = lon = yaw_cal = roll = pitch = np.nan
-          if loc.positionGeodetic.valid and len(loc.positionGeodetic.value) >= 2:
-            lat = float(loc.positionGeodetic.value[0])
-            lon = float(loc.positionGeodetic.value[1])
-          if loc.angularVelocityCalibrated.valid and len(loc.angularVelocityCalibrated.value) >= 3:
-            yaw_cal = float(loc.angularVelocityCalibrated.value[2])
-          if loc.orientationNED.valid and len(loc.orientationNED.value) >= 2:
-            roll = float(loc.orientationNED.value[0])
-            pitch = float(loc.orientationNED.value[1])
-          raw.add("liveLocationKalman", t, {"lat": lat, "lon": lon, "yaw_rate_calibrated": yaw_cal, "roll": roll, "pitch": pitch})
-        elif which == "liveCalibration":
-          rpy = list(msg.liveCalibration.rpyCalib)
-          raw.add("liveCalibration", t, {
-            "cal_roll": rpy[0] if len(rpy) > 0 else np.nan,
-            "cal_pitch": rpy[1] if len(rpy) > 1 else np.nan,
-            "cal_yaw": rpy[2] if len(rpy) > 2 else np.nan,
-          })
-        elif which == "logMessage":
-          text = _as_log_text(msg.logMessage)
-          raw.log_messages.append((t, text))
+        try:
+          _extract_message(raw, msg)
+        except Exception as exc:
+          notes.append(f"{segment.rlog_path}: message: {type(exc).__name__}: {exc}")
     except Exception as exc:
       notes.append(f"{segment.rlog_path}: {type(exc).__name__}: {exc}")
   return raw, notes
@@ -275,8 +282,21 @@ def _write_route_cache(route: RouteRef, cache_root: Path, force: bool = False) -
   )
   if arrays:
     np.savez_compressed(out_npz, **arrays)
+  elif out_npz.exists():
+    out_npz.unlink()
+  sample_count = int(len(arrays["t"])) if arrays else 0
+  npz_path = str(out_npz) if arrays else None
   meta = route_cache_metadata(route.route_id, C.CACHE_SCHEMA_VERSION, len(route.segments), evidence.confidence, notes)
-  meta.update({"pi_set": evidence.pi_set, "lc_kp": evidence.lc_kp, "lc_ki": evidence.lc_ki, "init": raw.init, "car_params": raw.car_params})
+  meta.update({
+    "success": bool(arrays),
+    "sample_count": sample_count,
+    "npz_path": npz_path,
+    "pi_set": evidence.pi_set,
+    "lc_kp": evidence.lc_kp,
+    "lc_ki": evidence.lc_ki,
+    "init": raw.init,
+    "car_params": raw.car_params,
+  })
   out_json.write_text(json.dumps(meta, indent=2, sort_keys=True))
   return meta
 
@@ -292,6 +312,10 @@ def main(argv: list[str] | None = None) -> int:
   routes = discover_routes(args.log_root)
   if args.route:
     wanted = set(args.route)
+    found = {r.route_id for r in routes}
+    missing = wanted - found
+    if missing:
+      parser.error(f"missing route(s): {', '.join(sorted(missing))}")
     routes = [r for r in routes if r.route_id in wanted]
   if args.list_routes:
     for route in routes:

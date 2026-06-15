@@ -1,7 +1,12 @@
 import json
+from pathlib import Path
+from types import SimpleNamespace
+
 import numpy as np
 
+from retrospective_lateral.code import extract
 from retrospective_lateral.code.extract import RawChannels, resample_channels, route_cache_metadata
+from retrospective_lateral.code.routes import RouteRef, SegmentRef
 
 
 def test_resample_channels_outputs_fixed_grid_and_masks_large_gaps():
@@ -105,3 +110,38 @@ def test_route_cache_metadata_is_json_serializable(tmp_path):
   assert "route_b8" in encoded
   assert meta["segments"] == 3
   assert set(meta) == {"route_id", "schema_version", "segments", "config_confidence", "notes"}
+
+
+def test_extract_route_raw_continues_after_bad_message(monkeypatch, tmp_path):
+  class BadMessage:
+    logMonoTime = 1_000_000_000
+
+    def which(self):
+      raise RuntimeError("bad optional field")
+
+  good_message = SimpleNamespace(
+    logMonoTime=2_000_000_000,
+    which=lambda: "carState",
+    carState=SimpleNamespace(
+      vEgo=11.0,
+      vEgoRaw=10.5,
+      aEgo=0.1,
+      steeringAngleDeg=1.0,
+      steeringRateDeg=0.2,
+      steeringTorque=0.3,
+      yawRate=0.01,
+      steeringPressed=False,
+      leftBlinker=False,
+      rightBlinker=False,
+      canValid=True,
+    ),
+  )
+
+  monkeypatch.setattr(extract, "LogReader", lambda _: [BadMessage(), good_message])
+  segment = SegmentRef(route_id="route_unit", segment_index=0, rlog_path=tmp_path / "rlog.zst")
+  route = RouteRef(route_id="route_unit", route_dir=Path(tmp_path), layout="flat", segments=(segment,))
+
+  raw, notes = extract.extract_route_raw(route)
+
+  assert notes
+  assert raw.values["carState"]["v_ego"] == [11.0]
