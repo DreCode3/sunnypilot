@@ -109,6 +109,31 @@ def synthetic_internal_excluded_weave_route():
   }
 
 
+def synthetic_boundary_crossing_weave_route():
+  fs = 20.0
+  t = np.arange(0.0, 60.0, 1.0 / fs)
+  active = (t >= 20.0) & (t < 45.0)
+  wave = np.zeros_like(t)
+  wave[active] = np.sin(2 * np.pi * 0.18 * t[active])
+  path_curv = 0.00035 * wave
+  speed = np.full_like(t, 3.0, dtype=np.float32)
+  speed[active] = 18.0
+  return {
+    "t": t.astype(np.float32),
+    "v_ego": speed,
+    "steering_angle_deg": (0.7 * wave).astype(np.float32),
+    "steering_rate_deg": np.gradient(0.7 * wave, 1.0 / fs).astype(np.float32),
+    "yaw_rate": (18.0 * path_curv).astype(np.float32),
+    "steering_pressed": np.zeros_like(t, dtype=np.float32),
+    "lat_active": np.ones_like(t, dtype=np.float32),
+    "blinker": np.zeros_like(t, dtype=np.float32),
+    "lane_change_state": np.zeros_like(t, dtype=np.float32),
+    "act_curvature": path_curv.astype(np.float32),
+    "desired_curvature": np.zeros_like(t, dtype=np.float32),
+    "model_y20": np.zeros_like(t, dtype=np.float32),
+  }
+
+
 def test_detect_weave_windows_finds_path_weave():
   windows = detect_weave_windows("route_test", synthetic_weave_route("command"))
   assert len(windows) >= 1
@@ -186,3 +211,12 @@ def test_detect_weave_windows_does_not_span_internal_excluded_samples():
   for window in windows:
     in_reported_span = (arrays["t"] >= window.start_s) & (arrays["t"] <= window.end_s)
     assert not arrays["blinker"][in_reported_span].any()
+
+
+def test_detect_weave_windows_keeps_valid_span_crossing_fixed_bucket_boundary():
+  windows = detect_weave_windows("route_test", synthetic_boundary_crossing_weave_route())
+
+  assert len(windows) == 1
+  assert 19.9 <= windows[0].start_s <= 20.1
+  assert 44.8 <= windows[0].end_s <= 45.0
+  assert windows[0].path_curvature_band_rms_1e4 > 2.0

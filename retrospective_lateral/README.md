@@ -30,8 +30,8 @@ Observed on the current local corpus:
 - Manifest routes: `147`
 - Cached route NPZ files: `145`
 - Manifest extraction failures: `2`
-- Symptom catalog rows: `1382`
+- Symptom catalog rows: `1557`
 - Low-speed wheel-swing rows: `75`
-- 10-70 mph weave rows: `1307`
+- 10-70 mph weave rows: `1482`
 
 The current report is descriptive analysis. Documented QA residual risks include missing lead/radar gating, route-scoped report isolation on populated caches, incomplete provenance surfacing, and JSON-only extraction failures not yet promoted into `symptom_catalog.csv`.

@@ -175,6 +175,21 @@ def _best_rms(values: dict[str, float], keys: tuple[str, ...]) -> float:
   return float(max(finite))
 
 
+def _weave_candidate_spans(eligible: np.ndarray, window_len: int, min_len: int) -> list[tuple[int, int]]:
+  spans: list[tuple[int, int]] = []
+  for start, end in contiguous_regions(eligible, min_len=min_len):
+    if end - start <= window_len:
+      spans.append((start, end))
+      continue
+    cursor = start
+    while cursor + window_len <= end:
+      spans.append((cursor, cursor + window_len))
+      cursor += window_len
+    if end - cursor >= min_len:
+      spans.append((cursor, end))
+  return spans
+
+
 def _stage_label(path_rms: float, steer_rms: float, stage_rms: dict[str, float]) -> tuple[str, str]:
   model_rms = stage_rms.get("model_y20", math.nan)
   if np.isfinite(model_rms) and model_rms > 0.02:
@@ -260,39 +275,35 @@ def detect_weave_windows(route_id: str, arrays: dict[str, np.ndarray]) -> list[W
   stage_bands = _stage_bands(arrays, eligible)
 
   windows: list[WeaveWindow] = []
-  for start in range(0, max(0, len(t) - window_len + 1), window_len):
-    end = start + window_len
-    bucket_mask = np.zeros(len(t), dtype=bool)
-    bucket_mask[start:end] = eligible[start:end]
-    for sub_start, sub_end in contiguous_regions(bucket_mask, min_len=min_eligible):
-      mask = np.zeros(len(t), dtype=bool)
-      mask[sub_start:sub_end] = True
-      path_rms = rms_masked(path_band, mask) * 1e4
-      steer_rms = rms_masked(steer_band, mask)
-      if not np.isfinite(path_rms) or path_rms < 0.2:
-        continue
-      stage_rms = _stage_rms_values(stage_bands, mask)
-      cmd_rms = _best_rms(stage_rms, COMMAND_STAGE_KEYS)
-      des_rms = _best_rms(stage_rms, DESIRED_STAGE_KEYS)
-      model_rms = stage_rms.get("model_y20", math.nan)
-      stage, note = _stage_label(path_rms, steer_rms, stage_rms)
-      peak_hz = spectral_peak_hz(np.where(mask, path_band, np.nan), C.FS_HZ, C.DEFAULT_WEAVE_BAND_HZ)
-      windows.append(WeaveWindow(
-        symptom="weave_10_70",
-        route_id=route_id,
-        start_s=float(t[sub_start]),
-        end_s=float(t[sub_end - 1]),
-        speed_mph_median=float(np.nanmedian(speed_mph[mask])),
-        path_curvature_band_rms_1e4=float(path_rms),
-        steering_band_rms_deg=float(steer_rms) if np.isfinite(steer_rms) else math.nan,
-        command_band_rms_1e4=float(cmd_rms) if np.isfinite(cmd_rms) else math.nan,
-        desired_band_rms_1e4=float(des_rms) if np.isfinite(des_rms) else math.nan,
-        model_y20_band_rms_m=float(model_rms) if np.isfinite(model_rms) else math.nan,
-        steer_per_path=float(steer_rms / path_rms) if np.isfinite(steer_rms) and path_rms > 0 else math.nan,
-        spectral_peak_hz=float(peak_hz) if np.isfinite(peak_hz) else math.nan,
-        stage_first_growth=stage,
-        evidence_note=note,
-      ))
+  for start, end in _weave_candidate_spans(eligible, window_len, min_eligible):
+    mask = np.zeros(len(t), dtype=bool)
+    mask[start:end] = True
+    path_rms = rms_masked(path_band, mask) * 1e4
+    steer_rms = rms_masked(steer_band, mask)
+    if not np.isfinite(path_rms) or path_rms < 0.2:
+      continue
+    stage_rms = _stage_rms_values(stage_bands, mask)
+    cmd_rms = _best_rms(stage_rms, COMMAND_STAGE_KEYS)
+    des_rms = _best_rms(stage_rms, DESIRED_STAGE_KEYS)
+    model_rms = stage_rms.get("model_y20", math.nan)
+    stage, note = _stage_label(path_rms, steer_rms, stage_rms)
+    peak_hz = spectral_peak_hz(np.where(mask, path_band, np.nan), C.FS_HZ, C.DEFAULT_WEAVE_BAND_HZ)
+    windows.append(WeaveWindow(
+      symptom="weave_10_70",
+      route_id=route_id,
+      start_s=float(t[start]),
+      end_s=float(t[end - 1]),
+      speed_mph_median=float(np.nanmedian(speed_mph[mask])),
+      path_curvature_band_rms_1e4=float(path_rms),
+      steering_band_rms_deg=float(steer_rms) if np.isfinite(steer_rms) else math.nan,
+      command_band_rms_1e4=float(cmd_rms) if np.isfinite(cmd_rms) else math.nan,
+      desired_band_rms_1e4=float(des_rms) if np.isfinite(des_rms) else math.nan,
+      model_y20_band_rms_m=float(model_rms) if np.isfinite(model_rms) else math.nan,
+      steer_per_path=float(steer_rms / path_rms) if np.isfinite(steer_rms) and path_rms > 0 else math.nan,
+      spectral_peak_hz=float(peak_hz) if np.isfinite(peak_hz) else math.nan,
+      stage_first_growth=stage,
+      evidence_note=note,
+    ))
   return sorted(windows, key=lambda w: w.path_curvature_band_rms_1e4, reverse=True)
 
 
