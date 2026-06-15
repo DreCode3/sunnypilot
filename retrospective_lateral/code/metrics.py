@@ -120,9 +120,18 @@ def _base_clean_mask(arrays: dict[str, np.ndarray]) -> np.ndarray:
   if "lat_active" not in arrays:
     raise ValueError("lat_active is required for low-speed wheel-swing eligibility")
   lat_active = erode_true(arrays["lat_active"] > 0.5, _flag_radius(C.ENGAGE_ERODE_S))
-  no_override = ~dilate_flags(arrays.get("steering_pressed", np.zeros(n)) > 0.5, _flag_radius(C.OVERRIDE_BUFFER_S))
+  override = (
+    (arrays.get("steering_pressed", np.zeros(n)) > 0.5)
+    | (arrays.get("cp_override", np.zeros(n)) > 0.5)
+    | (arrays.get("cx1_override", np.zeros(n)) > 0.5)
+  )
+  lane_change = (
+    (arrays.get("lane_change_state", np.zeros(n)) > 0.5)
+    | (arrays.get("cx1_lane_change", np.zeros(n)) > 0.5)
+  )
+  no_override = ~dilate_flags(override, _flag_radius(C.OVERRIDE_BUFFER_S))
   no_blinker = ~dilate_flags(arrays.get("blinker", np.zeros(n)) > 0.5, _flag_radius(C.BLINKER_BUFFER_S))
-  no_lane_change = ~dilate_flags(arrays.get("lane_change_state", np.zeros(n)) > 0.5, _flag_radius(C.LANE_CHANGE_BUFFER_S))
+  no_lane_change = ~dilate_flags(lane_change, _flag_radius(C.LANE_CHANGE_BUFFER_S))
   return lat_active & no_override & no_blinker & no_lane_change
 
 
@@ -253,37 +262,37 @@ def detect_weave_windows(route_id: str, arrays: dict[str, np.ndarray]) -> list[W
   windows: list[WeaveWindow] = []
   for start in range(0, max(0, len(t) - window_len + 1), window_len):
     end = start + window_len
-    mask = np.zeros(len(t), dtype=bool)
-    mask[start:end] = eligible[start:end]
-    if mask.sum() < min_eligible:
-      continue
-    path_rms = rms_masked(path_band, mask) * 1e4
-    steer_rms = rms_masked(steer_band, mask)
-    if not np.isfinite(path_rms) or path_rms < 0.2:
-      continue
-    stage_rms = _stage_rms_values(stage_bands, mask)
-    cmd_rms = _best_rms(stage_rms, COMMAND_STAGE_KEYS)
-    des_rms = _best_rms(stage_rms, DESIRED_STAGE_KEYS)
-    model_rms = stage_rms.get("model_y20", math.nan)
-    stage, note = _stage_label(path_rms, steer_rms, stage_rms)
-    peak_hz = spectral_peak_hz(np.where(mask, path_band, np.nan), C.FS_HZ, C.DEFAULT_WEAVE_BAND_HZ)
-    eligible_idx = np.flatnonzero(mask)
-    windows.append(WeaveWindow(
-      symptom="weave_10_70",
-      route_id=route_id,
-      start_s=float(t[eligible_idx[0]]),
-      end_s=float(t[eligible_idx[-1]]),
-      speed_mph_median=float(np.nanmedian(speed_mph[mask])),
-      path_curvature_band_rms_1e4=float(path_rms),
-      steering_band_rms_deg=float(steer_rms) if np.isfinite(steer_rms) else math.nan,
-      command_band_rms_1e4=float(cmd_rms) if np.isfinite(cmd_rms) else math.nan,
-      desired_band_rms_1e4=float(des_rms) if np.isfinite(des_rms) else math.nan,
-      model_y20_band_rms_m=float(model_rms) if np.isfinite(model_rms) else math.nan,
-      steer_per_path=float(steer_rms / path_rms) if np.isfinite(steer_rms) and path_rms > 0 else math.nan,
-      spectral_peak_hz=float(peak_hz) if np.isfinite(peak_hz) else math.nan,
-      stage_first_growth=stage,
-      evidence_note=note,
-    ))
+    bucket_mask = np.zeros(len(t), dtype=bool)
+    bucket_mask[start:end] = eligible[start:end]
+    for sub_start, sub_end in contiguous_regions(bucket_mask, min_len=min_eligible):
+      mask = np.zeros(len(t), dtype=bool)
+      mask[sub_start:sub_end] = True
+      path_rms = rms_masked(path_band, mask) * 1e4
+      steer_rms = rms_masked(steer_band, mask)
+      if not np.isfinite(path_rms) or path_rms < 0.2:
+        continue
+      stage_rms = _stage_rms_values(stage_bands, mask)
+      cmd_rms = _best_rms(stage_rms, COMMAND_STAGE_KEYS)
+      des_rms = _best_rms(stage_rms, DESIRED_STAGE_KEYS)
+      model_rms = stage_rms.get("model_y20", math.nan)
+      stage, note = _stage_label(path_rms, steer_rms, stage_rms)
+      peak_hz = spectral_peak_hz(np.where(mask, path_band, np.nan), C.FS_HZ, C.DEFAULT_WEAVE_BAND_HZ)
+      windows.append(WeaveWindow(
+        symptom="weave_10_70",
+        route_id=route_id,
+        start_s=float(t[sub_start]),
+        end_s=float(t[sub_end - 1]),
+        speed_mph_median=float(np.nanmedian(speed_mph[mask])),
+        path_curvature_band_rms_1e4=float(path_rms),
+        steering_band_rms_deg=float(steer_rms) if np.isfinite(steer_rms) else math.nan,
+        command_band_rms_1e4=float(cmd_rms) if np.isfinite(cmd_rms) else math.nan,
+        desired_band_rms_1e4=float(des_rms) if np.isfinite(des_rms) else math.nan,
+        model_y20_band_rms_m=float(model_rms) if np.isfinite(model_rms) else math.nan,
+        steer_per_path=float(steer_rms / path_rms) if np.isfinite(steer_rms) and path_rms > 0 else math.nan,
+        spectral_peak_hz=float(peak_hz) if np.isfinite(peak_hz) else math.nan,
+        stage_first_growth=stage,
+        evidence_note=note,
+      ))
   return sorted(windows, key=lambda w: w.path_curvature_band_rms_1e4, reverse=True)
 
 

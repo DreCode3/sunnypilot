@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-CACHE_SCHEMA_VERSION = "retrolat-v1"
+CACHE_SCHEMA_VERSION = "retrolat-v2"
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LOG_ROOT = REPO_ROOT / "explorer_st_logs"

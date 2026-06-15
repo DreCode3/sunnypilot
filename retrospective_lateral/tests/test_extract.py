@@ -178,10 +178,12 @@ def test_write_route_cache_enriches_old_cache_metadata(tmp_path):
   cache_root = tmp_path / "cache"
   cache_root.mkdir()
   t = np.asarray([0.0, 0.05, 0.10], dtype=np.float32)
-  np.savez_compressed(cache_root / "route_old.npz", t=t)
+  current_payload = {key: np.full_like(t, np.nan) for key in extract.REQUIRED_CACHE_CHANNELS}
+  current_payload["t"] = t
+  np.savez_compressed(cache_root / "route_old.npz", **current_payload)
   old_meta = {
     "route_id": "route_old",
-    "schema_version": "retrolat-v1",
+    "schema_version": extract.C.CACHE_SCHEMA_VERSION,
     "segments": 1,
     "config_confidence": "unknown",
     "notes": [],
@@ -196,6 +198,44 @@ def test_write_route_cache_enriches_old_cache_metadata(tmp_path):
   assert meta["sample_count"] == len(t)
   assert meta["npz_path"] == str(cache_root / "route_old.npz")
   assert json.loads((cache_root / "route_old.json").read_text()) == meta
+
+
+def test_write_route_cache_rebuilds_legacy_cache_missing_pipeline_channels(monkeypatch, tmp_path):
+  cache_root = tmp_path / "cache"
+  cache_root.mkdir()
+  np.savez_compressed(cache_root / "route_old.npz", t=np.asarray([0.0, 0.05], dtype=np.float32))
+  (cache_root / "route_old.json").write_text(json.dumps({
+    "route_id": "route_old",
+    "schema_version": "retrolat-v1",
+    "segments": 1,
+    "config_confidence": "unknown",
+    "notes": [],
+    "success": True,
+    "sample_count": 2,
+    "npz_path": str(cache_root / "route_old.npz"),
+  }))
+  raw = RawChannels()
+  raw.add("carState", 0.0, {"v_ego": 12.0})
+  raw.add("carState", 0.1, {"v_ego": 12.0})
+  extract._extract_message(raw, _log_message(0.0, _cp_line(0.0010)))
+  extract._extract_message(raw, _log_message(0.1, _cp_line(0.0020)))
+  calls = {"extract": 0}
+
+  def fake_extract_route_raw(_route):
+    calls["extract"] += 1
+    return raw, []
+
+  monkeypatch.setattr(extract, "extract_route_raw", fake_extract_route_raw)
+  segment = SegmentRef(route_id="route_old", segment_index=0, rlog_path=tmp_path / "rlog.zst")
+  route = RouteRef(route_id="route_old", route_dir=tmp_path, layout="flat", segments=(segment,))
+
+  meta = extract._write_route_cache(route, cache_root, force=False)
+
+  assert calls["extract"] == 1
+  assert meta["schema_version"] == extract.C.CACHE_SCHEMA_VERSION
+  with np.load(cache_root / "route_old.npz") as data:
+    assert "cp_final_command" in data.files
+    assert "cx1_command_curvature" in data.files
 
 
 def test_write_route_cache_resamples_cp_and_cx1_log_message_channels(monkeypatch, tmp_path):

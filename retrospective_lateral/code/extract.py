@@ -22,6 +22,22 @@ from retrospective_lateral.code.signal_utils import fill_guarded
 from retrospective_lateral.code.telemetry import parse_cp_line, parse_cx1_line, parse_lc_line, recover_pi_config
 
 
+REQUIRED_CACHE_CHANNELS = (
+  "t",
+  "cp_final_command",
+  "cp_pre_rate_limit",
+  "cp_rate_limited",
+  "cp_ema_curvature",
+  "cp_predicted_curvature",
+  "cx1_command_curvature",
+  "cx1_pre_rate_limit",
+  "cx1_rate_limited",
+  "cx1_ema_curvature",
+  "cx1_predicted_curvature",
+  "cx1_blend",
+)
+
+
 @dataclass
 class RawChannels:
   times: dict[str, list[float]] = field(default_factory=lambda: defaultdict(list))
@@ -344,6 +360,18 @@ def _cached_sample_count(npz_path: Path) -> int:
     return 0
 
 
+def _cache_payload_current(npz_path: Path) -> bool:
+  try:
+    with np.load(npz_path) as data:
+      return all(key in data.files for key in REQUIRED_CACHE_CHANNELS)
+  except Exception:
+    return False
+
+
+def _cache_metadata_current(meta: dict[str, Any]) -> bool:
+  return meta.get("schema_version") == C.CACHE_SCHEMA_VERSION
+
+
 def _normalize_cache_metadata(meta: dict[str, Any], out_npz: Path, out_json: Path) -> dict[str, Any]:
   if "success" in meta and "sample_count" in meta and "npz_path" in meta:
     return meta
@@ -362,7 +390,9 @@ def _write_route_cache(route: RouteRef, cache_root: Path, force: bool = False) -
   out_npz = cache_root / f"{route.route_id}.npz"
   out_json = cache_root / f"{route.route_id}.json"
   if out_npz.exists() and out_json.exists() and not force:
-    return _normalize_cache_metadata(json.loads(out_json.read_text()), out_npz, out_json)
+    meta = json.loads(out_json.read_text())
+    if _cache_metadata_current(meta) and _cache_payload_current(out_npz):
+      return _normalize_cache_metadata(meta, out_npz, out_json)
   raw, notes = extract_route_raw(route)
   arrays = resample_channels(raw, fs_hz=C.FS_HZ)
   lc_rows = [parse_lc_line(text, t) for t, text in raw.log_messages]

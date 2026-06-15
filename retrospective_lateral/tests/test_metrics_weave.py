@@ -57,6 +57,8 @@ def synthetic_excluded_burst_route(flag_name: str):
     "desired_curvature": np.zeros_like(t, dtype=np.float32),
     "model_y20": np.zeros_like(t, dtype=np.float32),
   }
+  if flag_name not in arrays:
+    arrays[flag_name] = np.zeros_like(t, dtype=np.float32)
   arrays[flag_name][burst] = 1.0
   return arrays
 
@@ -68,6 +70,29 @@ def synthetic_edge_excluded_weave_route():
   path_curv = 0.00035 * wave
   blinker = np.zeros_like(t, dtype=np.float32)
   blinker[(t < 3.0) | (t >= 28.0)] = 1.0
+  return {
+    "t": t.astype(np.float32),
+    "v_ego": np.full_like(t, 18.0, dtype=np.float32),
+    "steering_angle_deg": (0.7 * wave).astype(np.float32),
+    "steering_rate_deg": np.gradient(0.7 * wave, 1.0 / fs).astype(np.float32),
+    "yaw_rate": (18.0 * path_curv).astype(np.float32),
+    "steering_pressed": np.zeros_like(t, dtype=np.float32),
+    "lat_active": np.ones_like(t, dtype=np.float32),
+    "blinker": blinker,
+    "lane_change_state": np.zeros_like(t, dtype=np.float32),
+    "act_curvature": path_curv.astype(np.float32),
+    "desired_curvature": np.zeros_like(t, dtype=np.float32),
+    "model_y20": np.zeros_like(t, dtype=np.float32),
+  }
+
+
+def synthetic_internal_excluded_weave_route():
+  fs = 20.0
+  t = np.arange(0.0, 60.0, 1.0 / fs)
+  wave = np.sin(2 * np.pi * 0.18 * t)
+  path_curv = 0.00035 * wave
+  blinker = np.zeros_like(t, dtype=np.float32)
+  blinker[(t >= 15.0) & (t < 16.0)] = 1.0
   return {
     "t": t.astype(np.float32),
     "v_ego": np.full_like(t, 18.0, dtype=np.float32),
@@ -138,9 +163,26 @@ def test_detect_weave_windows_does_not_let_excluded_bursts_leak_into_detection(f
   assert windows == []
 
 
+@pytest.mark.parametrize("flag_name", ["cp_override", "cx1_override", "cx1_lane_change"])
+def test_detect_weave_windows_honors_controller_telemetry_exclusion_flags(flag_name):
+  windows = detect_weave_windows("route_test", synthetic_excluded_burst_route(flag_name))
+
+  assert windows == []
+
+
 def test_detect_weave_windows_reports_eligible_span_when_fixed_window_edges_are_excluded():
   windows = detect_weave_windows("route_test", synthetic_edge_excluded_weave_route())
 
   assert len(windows) == 1
   assert 3.9 <= windows[0].start_s <= 4.1
   assert 26.8 <= windows[0].end_s <= 27.0
+
+
+def test_detect_weave_windows_does_not_span_internal_excluded_samples():
+  arrays = synthetic_internal_excluded_weave_route()
+  windows = detect_weave_windows("route_test", arrays)
+
+  assert windows
+  for window in windows:
+    in_reported_span = (arrays["t"] >= window.start_s) & (arrays["t"] <= window.end_s)
+    assert not arrays["blinker"][in_reported_span].any()
