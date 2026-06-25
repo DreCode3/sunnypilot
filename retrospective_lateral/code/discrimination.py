@@ -391,11 +391,12 @@ def frequency_speed_slope(records: list) -> dict:
             "flat": bool(abs(slope) < C.DISCRIM_FREQ_FLAT_HZ_PER_MPH)}
 
 
-def classify_source(record: dict, repro_fraction: float, freq_flat: bool) -> tuple:
+def classify_source(record: dict, repro_fraction: float, freq_flat: bool) -> tuple[str, str]:
     """Combine the three tests into a single A/B/C/ambiguous source label.
 
-    Priority: insufficient -> road (reproducible) -> artifact (model residual) ->
-    loop (fixed-frequency on a straight clean road) -> ambiguous.
+    A/B/C are taxonomy codes (A=model_artifact, B=road_feature, C=loop_limit_cycle),
+    NOT priority ranks. Priority (evaluation order): insufficient -> road (reproducible)
+    -> artifact (model residual) -> loop (fixed-frequency on a straight clean road) -> ambiguous.
     """
     lane_rms = record.get("lane_curv_rms_1pm", math.nan)
     model_rms = record.get("model_curv_rms_1pm", math.nan)

@@ -224,3 +224,26 @@ def test_classify_source_picks_road_artifact_loop_ambiguous():
     # Ambiguous: nothing decisive
     amb = {**base, "model_vs_lane_corr": 0.4, "lane_vs_independent_corr": 0.4}
     assert D.classify_source(amb, repro_fraction=float("nan"), freq_flat=False)[0] == "ambiguous"
+
+
+def test_classify_source_insufficient_when_curvature_rms_missing_or_nan():
+    # No lane/model curvature RMS at all -> cannot evaluate -> insufficient_evidence.
+    assert D.classify_source({}, repro_fraction=float("nan"), freq_flat=False)[0] == "insufficient_evidence"
+    # Present but NaN -> still insufficient.
+    nan_rms = dict(lane_curv_rms_1pm=float("nan"), model_curv_rms_1pm=1.0)
+    assert D.classify_source(nan_rms, repro_fraction=float("nan"), freq_flat=False)[0] == "insufficient_evidence"
+
+
+def test_frequency_speed_slope_guard_paths_return_not_flat_nan_slope():
+    # Fewer than 5 records -> guard: flat False, slope NaN.
+    few = [{"speed_mph_median": s, "spectral_peak_hz": 0.2} for s in (10, 20, 30, 40)]
+    res_few = D.frequency_speed_slope(few)
+    assert res_few["n"] == 4
+    assert res_few["flat"] is False
+    assert math.isnan(res_few["slope_hz_per_mph"])
+    # >= 5 records but all-equal speeds (zero variance) -> guard: flat False, slope NaN.
+    zero_var = [{"speed_mph_median": 30.0, "spectral_peak_hz": 0.10 + 0.01 * i} for i in range(8)]
+    res_zv = D.frequency_speed_slope(zero_var)
+    assert res_zv["n"] == 8
+    assert res_zv["flat"] is False
+    assert math.isnan(res_zv["slope_hz_per_mph"])
