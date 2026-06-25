@@ -39,3 +39,16 @@ HEADING_BIN_DEG = 45.0
 
 M_PER_DEG_LAT = 111_320.0
 M_PER_DEG_LON_AT_EQUATOR = 111_320.0
+
+# --- Offline model/path-vs-road discrimination (analysis-only) ---
+DISCRIM_SCHEMA_VERSION = "discrim-v1"
+DISCRIM_LOOKAHEAD_M = 20.0            # primary lookahead for offset->curvature conversion
+DISCRIM_MIN_SPEED_MPS = 1.5          # below this, yawRate/v curvature is unreliable
+DISCRIM_MAX_LAG_S = 2.0              # cross-correlation search half-window
+DISCRIM_ROAD_COHERENCE_MIN = 0.6     # |corr| threshold for "moving together"
+DISCRIM_ARTIFACT_RESIDUAL_RATIO = 0.5  # (model-minus-lane RMS)/(lane RMS) >= this => model adds motion
+DISCRIM_REPRO_FRACTION_ROAD = 0.5    # cross-pass profile corr >= this => road-reproducible
+DISCRIM_REPRO_MIN_SHARED_CELLS = 4   # min shared GPS cells to compare two passes
+DISCRIM_FREQ_FLAT_HZ_PER_MPH = 0.002 # |d(peakHz)/d(mph)| below this => speed-independent (loop-like)
+DISCRIM_TOP_N_PER_SYMPTOM = 40       # how many worst episodes per symptom to discriminate
+MPS_TO_MPH = 2.2369362920544
