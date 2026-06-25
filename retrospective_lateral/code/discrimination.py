@@ -13,6 +13,7 @@ import numpy as np
 from retrospective_lateral.code import config as C
 from retrospective_lateral.code.signal_utils import (
     contiguous_regions,
+    dilate_flags,
     filter_continuous,
     gps_cells,
     heading_bin_deg,
@@ -53,5 +54,7 @@ def gps_course_deg(lat_deg, lon_deg):
     dx = np.gradient(east_m)
     dy = np.gradient(north_m)
     course = np.degrees(np.arctan2(dx, dy)) % 360.0
-    course[~ok] = np.nan
+    # np.gradient poisons the valid samples bordering each NaN gap, so explicitly
+    # invalidate the gap samples and their immediate neighbors.
+    course[dilate_flags(~ok, 1)] = np.nan
     return course

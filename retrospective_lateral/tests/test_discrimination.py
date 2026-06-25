@@ -1,6 +1,7 @@
 import math
 
 import numpy as np
+import pytest
 
 from retrospective_lateral.code import discrimination as D
 
@@ -15,11 +16,8 @@ def test_offset_to_curvature_parabolic_relation():
 
 
 def test_offset_to_curvature_rejects_nonpositive_lookahead():
-    try:
+    with pytest.raises(ValueError):
         D.offset_to_curvature(1.0, 0.0)
-    except ValueError:
-        return
-    raise AssertionError("expected ValueError for lookahead <= 0")
 
 
 def test_gps_course_deg_cardinal_directions():
@@ -34,3 +32,24 @@ def test_gps_course_deg_cardinal_directions():
     lon_east = -84.0 + np.arange(n) * 1e-4
     course_e = D.gps_course_deg(lat_const, lon_east)
     assert abs(np.nanmedian(course_e) - 90.0) < 5.0
+
+
+def test_gps_course_deg_nan_gap_does_not_contaminate_far_samples():
+    # An interior GPS gap must NaN the gap and its two immediate neighbors (np.gradient
+    # poisons them), while samples far from the gap stay finite.
+    n = 30
+    lat = 34.0 + np.arange(n) * 1e-4
+    lon = np.full(n, -84.0)
+    gap = 15
+    lat[gap] = np.nan
+    course = D.gps_course_deg(lat, lon)
+    assert np.isnan(course[gap])
+    assert np.isnan(course[gap - 1]) and np.isnan(course[gap + 1])  # gradient-contaminated
+    assert np.isfinite(course[5]) and np.isfinite(course[25])       # far away, unaffected
+
+
+def test_gps_course_deg_all_nan_and_short_inputs_return_all_nan():
+    course_all_nan = D.gps_course_deg(np.full(10, np.nan), np.full(10, np.nan))
+    assert np.all(np.isnan(course_all_nan))
+    course_len1 = D.gps_course_deg(np.array([34.0]), np.array([-84.0]))
+    assert np.all(np.isnan(course_len1))
