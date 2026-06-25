@@ -56,12 +56,20 @@ def test_gps_course_deg_all_nan_and_short_inputs_return_all_nan():
 
 
 def test_path_curvature_from_rate_guards_low_speed():
-    rate = np.array([0.1, 0.1, 0.1])
-    v = np.array([10.0, 1.0, np.nan])  # 0.1/10 = 0.01; v=1 < 1.5 guard -> nan; nan -> nan
+    rate = np.array([0.1, 0.1, 0.1, -0.2])
+    v = np.array([10.0, 1.0, np.nan, 10.0])  # 0.1/10 = 0.01; v=1 < 1.5 guard -> nan; nan -> nan
     out = D.path_curvature_from_rate(rate, v, min_speed_mps=1.5)
     assert math.isclose(out[0], 0.01, rel_tol=1e-9)
     assert np.isnan(out[1])
     assert np.isnan(out[2])
+    assert math.isclose(out[3], -0.02, rel_tol=1e-9)  # negative rate (left curve) covers both signs
+
+
+def test_path_curvature_from_rate_accepts_scalar_speed():
+    # A single average speed must broadcast across the rate array (no IndexError).
+    out = D.path_curvature_from_rate(np.array([0.1, 0.2]), 10.0)
+    assert math.isclose(out[0], 0.01, rel_tol=1e-9)
+    assert math.isclose(out[1], 0.02, rel_tol=1e-9)
 
 
 def test_xcorr_best_recovers_known_lag_and_sign():

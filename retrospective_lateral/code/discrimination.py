@@ -67,6 +67,7 @@ def path_curvature_from_rate(rate, v_mps, min_speed_mps: float = C.DISCRIM_MIN_S
     """
     rate = np.asarray(rate, dtype=float)
     v = np.asarray(v_mps, dtype=float)
+    v = np.broadcast_to(v, rate.shape)
     out = np.full(rate.shape, np.nan)
     ok = np.isfinite(rate) & np.isfinite(v) & (v >= float(min_speed_mps))
     out[ok] = rate[ok] / v[ok]
@@ -78,6 +79,8 @@ def gps_path_curvature(lat_deg, lon_deg, v_mps, fs_hz: float = C.FS_HZ,
     """Heading-rate curvature from GPS course (1/m). Fully model- and EPAS-independent.
 
     Coarse/noisy; used only as a third independent corroborator, not a primary metric.
+    Because np.gradient runs on the gap-compressed valid samples, the rate can be
+    slightly inflated at GPS-gap boundaries (mitigated by the dilation in gps_course_deg).
     """
     course = gps_course_deg(lat_deg, lon_deg)
     rate = np.full(course.shape, np.nan)
