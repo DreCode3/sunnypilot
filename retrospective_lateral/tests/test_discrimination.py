@@ -251,20 +251,23 @@ def test_frequency_speed_slope_guard_paths_return_not_flat_nan_slope():
 
 
 def test_select_top_episodes_ranks_and_caps_per_symptom():
+    # route_6 has the highest weave path RMS but status="bad" -> must be excluded.
     df = pd.DataFrame({
-        "route_id": [f"route_{i}" for i in range(6)],
-        "symptom": ["weave_10_70"] * 3 + ["low_speed_wheel_swing"] * 3,
-        "status": ["ok"] * 6,
-        "start_s": [10.0, 20.0, 30.0, 40.0, 50.0, 60.0],
-        "end_s": [40.0, 50.0, 60.0, 50.0, 60.0, 70.0],
-        "peak_s": [25.0, 35.0, 45.0, 45.0, 55.0, 65.0],
-        "speed_mph_median": [30.0, 40.0, 50.0, 3.0, 4.0, 5.0],
-        "steering_peak_to_peak_deg": [np.nan, np.nan, np.nan, 12.0, 20.0, 8.0],
-        "path_curvature_band_rms_1e4": [5.0, 9.0, 2.0, np.nan, np.nan, np.nan],
+        "route_id": [f"route_{i}" for i in range(7)],
+        "symptom": ["weave_10_70"] * 3 + ["low_speed_wheel_swing"] * 3 + ["weave_10_70"],
+        "status": ["ok"] * 6 + ["bad"],
+        "start_s": [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0],
+        "end_s": [40.0, 50.0, 60.0, 50.0, 60.0, 70.0, 100.0],
+        "peak_s": [25.0, 35.0, 45.0, 45.0, 55.0, 65.0, 85.0],
+        "speed_mph_median": [30.0, 40.0, 50.0, 3.0, 4.0, 5.0, 45.0],
+        "steering_peak_to_peak_deg": [np.nan, np.nan, np.nan, 12.0, 20.0, 8.0, np.nan],
+        "path_curvature_band_rms_1e4": [5.0, 9.0, 2.0, np.nan, np.nan, np.nan, 99.0],
     })
     sel = D.select_top_episodes(df, top_n=2)
     weave = [e for e in sel if e["symptom"] == "weave_10_70"]
     low = [e for e in sel if e["symptom"] == "low_speed_wheel_swing"]
     assert len(weave) == 2 and len(low) == 2
-    assert weave[0]["route_id"] == "route_1"   # highest path RMS (9.0)
+    assert weave[0]["route_id"] == "route_1"   # highest path RMS (9.0) among status=ok
     assert low[0]["route_id"] == "route_4"     # highest steering p2p (20.0)
+    # route_6 (path RMS 99.0) is status="bad" and must not appear in any selection.
+    assert all(e["route_id"] != "route_6" for e in sel)

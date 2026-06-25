@@ -423,7 +423,7 @@ def classify_source(record: dict, repro_fraction: float, freq_flat: bool) -> tup
 
 
 def select_top_episodes(catalog: "pd.DataFrame", top_n: int = C.DISCRIM_TOP_N_PER_SYMPTOM) -> list:
-    ok = catalog[catalog.get("status", "ok").astype(str) == "ok"] if "status" in catalog else catalog
+    ok = catalog[catalog["status"].astype(str) == "ok"] if "status" in catalog else catalog
     episodes: list[dict] = []
     for symptom, rank_col in (("weave_10_70", "path_curvature_band_rms_1e4"),
                               ("low_speed_wheel_swing", "steering_peak_to_peak_deg")):
@@ -457,14 +457,17 @@ def build_discrimination_outputs(report_root: Path = C.DEFAULT_REPORT_ROOT,
     records: list[dict] = []
     profiles: dict[str, dict] = {}   # episode_label -> spatial profile
     arrays_cache: dict[str, dict] = {}
+    _MISSING = object()  # sentinel: an empty-dict cache hit is falsy but still a valid hit
     for ep in episodes:
         rid = ep["route_id"]
-        arrays = arrays_cache.get(rid) or _load_cache(cache_root, rid)
+        arrays = arrays_cache.get(rid, _MISSING)
+        if arrays is _MISSING:
+            arrays = _load_cache(cache_root, rid)
         if arrays is None:
             continue
         arrays_cache[rid] = arrays
         rec = discriminate_window(arrays, ep["symptom"], rid, ep["start_s"], ep["end_s"], ep["peak_s"])
-        label = f"{rid}@{ep['peak_s']:.1f}"
+        label = f"{rid}@{ep['peak_s']:.2f}"
         row = asdict(rec)
         row["episode_label"] = label
         records.append(row)
@@ -477,19 +480,17 @@ def build_discrimination_outputs(report_root: Path = C.DEFAULT_REPORT_ROOT,
     repro_rows: list[dict] = []
     best_repro: dict[str, float] = {}
     labels = list(profiles)
-    for i in range(len(labels)):
-        for j in range(i + 1, len(labels)):
-            la, lb = labels[i], labels[j]
-            if la.split("@")[0] == lb.split("@")[0]:
-                continue  # same route is not an independent pass
-            res = cross_pass_reproducibility([profiles[la], profiles[lb]], key="lane")
-            if res["n_pairs"] == 0:
-                continue
-            repro_rows.append({"episode_a": la, "episode_b": lb, **res})
-            for lab in (la, lb):
-                prev = best_repro.get(lab, float("-inf"))
-                if np.isfinite(res["median_pairwise_corr"]) and res["median_pairwise_corr"] > prev:
-                    best_repro[lab] = res["median_pairwise_corr"]
+    for la, lb in combinations(labels, 2):
+        if la.split("@")[0] == lb.split("@")[0]:
+            continue  # same route is not an independent pass
+        res = cross_pass_reproducibility([profiles[la], profiles[lb]], key="lane")
+        if res["n_pairs"] == 0:
+            continue
+        repro_rows.append({"episode_a": la, "episode_b": lb, **res})
+        for lab in (la, lb):
+            prev = best_repro.get(lab, float("-inf"))
+            if np.isfinite(res["median_pairwise_corr"]) and res["median_pairwise_corr"] > prev:
+                best_repro[lab] = res["median_pairwise_corr"]
     pd.DataFrame(repro_rows).to_csv(report_root / "discrimination_repeat_pass.csv", index=False)
 
     # Frequency-vs-speed per symptom.
@@ -504,7 +505,7 @@ def build_discrimination_outputs(report_root: Path = C.DEFAULT_REPORT_ROOT,
     # Final per-episode classification.
     class_rows = []
     for r in records:
-        repro = best_repro.get(r["episode_label"], float("nan"))
+        repro = best_repro.get(r["episode_label"], math.nan)
         label, why = classify_source(r, repro, freq_flat_by_symptom.get(r["symptom"], False))
         class_rows.append({"episode_label": r["episode_label"], "symptom": r["symptom"],
                            "route_id": r["route_id"], "speed_mph_median": r["speed_mph_median"],
