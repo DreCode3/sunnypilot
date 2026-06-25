@@ -401,6 +401,12 @@ def classify_source(record: dict, repro_fraction: float, freq_flat: bool) -> tup
     A/B/C are taxonomy codes (A=model_artifact, B=road_feature, C=loop_limit_cycle),
     NOT priority ranks. Priority (evaluation order): insufficient -> road (reproducible)
     -> artifact (model residual) -> loop (fixed-frequency on a straight clean road) -> ambiguous.
+
+    NOTE: this source_label is authoritative. It checks road(reproducible)-before-artifact,
+    whereas the per-window discriminate_window.tentative_label is a coherence-only pre-label
+    that checks artifact-before-road and CANNOT see cross-pass reproducibility. They can
+    therefore diverge (e.g. tentative_label=artifact_like but source_label=road_feature_B)
+    by design; source_label wins because it incorporates the cross-pass (B) test.
     """
     lane_rms = record.get("lane_curv_rms_1pm", math.nan)
     model_rms = record.get("model_curv_rms_1pm", math.nan)
@@ -431,10 +437,18 @@ def select_top_episodes(catalog: "pd.DataFrame", top_n: int = C.DISCRIM_TOP_N_PE
         if rank_col in sub:
             sub = sub.sort_values(rank_col, ascending=False, na_position="last")
         for _, row in sub.head(top_n).iterrows():
+            # peak_s is NaN for some catalog rows (e.g. every weave_10_70 row). The column
+            # EXISTS, so a plain row.get("peak_s", row["start_s"]) returns the NaN value
+            # rather than the fallback. Fall back to the (always-finite, per-window-distinct)
+            # start_s whenever peak_s is missing OR non-finite, so the downstream
+            # f"{route_id}@{peak_s:.2f}" label stays unique per window and spatial profiles
+            # are not silently overwritten by colliding "@nan" keys.
+            peak_raw = row.get("peak_s", np.nan)
+            peak = float(peak_raw) if np.isfinite(peak_raw) else float(row["start_s"])
             episodes.append({
                 "symptom": symptom, "route_id": str(row["route_id"]),
                 "start_s": float(row["start_s"]), "end_s": float(row["end_s"]),
-                "peak_s": float(row.get("peak_s", row["start_s"])),
+                "peak_s": peak,
             })
     return episodes
 
@@ -458,7 +472,7 @@ def build_discrimination_outputs(report_root: Path = C.DEFAULT_REPORT_ROOT,
     profiles: dict[str, dict] = {}   # episode_label -> spatial profile
     arrays_cache: dict[str, dict] = {}
     _MISSING = object()  # sentinel: an empty-dict cache hit is falsy but still a valid hit
-    for ep in episodes:
+    for ep_idx, ep in enumerate(episodes):
         rid = ep["route_id"]
         arrays = arrays_cache.get(rid, _MISSING)
         if arrays is _MISSING:
@@ -468,6 +482,11 @@ def build_discrimination_outputs(report_root: Path = C.DEFAULT_REPORT_ROOT,
         arrays_cache[rid] = arrays
         rec = discriminate_window(arrays, ep["symptom"], rid, ep["start_s"], ep["end_s"], ep["peak_s"])
         label = f"{rid}@{ep['peak_s']:.2f}"
+        # Defensive guard: a duplicate label means two windows mapped to the same key
+        # (would silently drop a spatial profile). Disambiguate with the episode index
+        # so no profile is ever overwritten.
+        if label in profiles:
+            label = f"{label}#{ep_idx}"
         row = asdict(rec)
         row["episode_label"] = label
         records.append(row)

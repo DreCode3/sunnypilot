@@ -271,3 +271,30 @@ def test_select_top_episodes_ranks_and_caps_per_symptom():
     assert low[0]["route_id"] == "route_4"     # highest steering p2p (20.0)
     # route_6 (path RMS 99.0) is status="bad" and must not appear in any selection.
     assert all(e["route_id"] != "route_6" for e in sel)
+
+
+def test_select_top_episodes_falls_back_to_start_s_when_peak_s_nan():
+    # Regression: in the real catalog peak_s is NaN for every weave_10_70 row while the
+    # column still EXISTS, so a naive row.get("peak_s", start_s) returns the NaN. With two
+    # same-route weave windows sharing route_id, the f"{route_id}@{peak_s:.2f}" episode label
+    # then collapses to a single "route_x@nan" key and silently overwrites a spatial profile.
+    # select_top_episodes must instead yield FINITE peak_s values that are DISTINCT per window.
+    df = pd.DataFrame({
+        "route_id": ["route_x", "route_x"],     # SAME route, two different windows
+        "symptom": ["weave_10_70", "weave_10_70"],
+        "status": ["ok", "ok"],
+        "start_s": [100.0, 250.0],              # distinct per window, always finite
+        "end_s": [130.0, 280.0],
+        "peak_s": [np.nan, np.nan],            # column present but NaN, as in the real catalog
+        "path_curvature_band_rms_1e4": [9.0, 5.0],
+    })
+    sel = D.select_top_episodes(df, top_n=40)
+    weave = [e for e in sel if e["symptom"] == "weave_10_70"]
+    assert len(weave) == 2
+    peaks = [e["peak_s"] for e in weave]
+    # All peak_s finite (fell back to start_s) ...
+    assert all(np.isfinite(p) for p in peaks)
+    # ... and distinct per (route, window), so downstream labels do not collide.
+    assert peaks[0] != peaks[1]
+    labels = {f"{e['route_id']}@{e['peak_s']:.2f}" for e in weave}
+    assert len(labels) == 2
