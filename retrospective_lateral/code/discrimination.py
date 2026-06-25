@@ -7,6 +7,7 @@ to retrospective_lateral/results/. Imports nothing from the vehicle-control stac
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -14,6 +15,7 @@ from retrospective_lateral.code import config as C
 from retrospective_lateral.code.signal_utils import (
     contiguous_regions,
     dilate_flags,
+    erode_true,
     filter_continuous,
     gps_cells,
     heading_bin_deg,
@@ -127,3 +129,163 @@ def xcorr_best(a, b, fs_hz: float, max_lag_s: float = C.DISCRIM_MAX_LAG_S):
     if best_corr < -1.5:
         return (math.nan, math.nan)
     return (best_corr, best_lag / fs_hz)
+
+
+@dataclass(frozen=True)
+class DiscriminationWindow:
+    symptom: str
+    route_id: str
+    start_s: float
+    end_s: float
+    peak_s: float
+    speed_mph_median: float
+    lookahead_m: float
+    gps_cell: float
+    heading_bin: int
+    speed_bin: int
+    road_curv_level_1pm: float
+    model_curv_rms_1pm: float
+    lane_curv_rms_1pm: float
+    roadedge_curv_rms_1pm: float
+    desired_rms_1pm: float
+    cp_final_rms_1pm: float
+    can_yaw_curv_rms_1pm: float
+    cal_yaw_curv_rms_1pm: float
+    gps_curv_rms_1pm: float
+    steering_band_rms_deg: float
+    model_vs_lane_corr: float
+    model_vs_lane_lag_s: float
+    lane_vs_independent_corr: float
+    lane_vs_independent_lag_s: float
+    model_minus_lane_residual_rms_1pm: float
+    model_residual_over_lane: float
+    spectral_peak_hz: float
+    clean_fraction: float
+    straight_clean: int
+    tentative_label: str
+
+
+def _band_for(symptom: str):
+    return C.LOW_SPEED_INSPECT_BAND_HZ if symptom == "low_speed_wheel_swing" else C.DEFAULT_WEAVE_BAND_HZ
+
+
+def _clean_mask(arrays) -> np.ndarray:
+    n = len(arrays["t"])
+    fs = C.FS_HZ
+
+    def chan(name, default):
+        return np.asarray(arrays.get(name, np.full(n, default)), dtype=float)
+
+    lat_active = chan("lat_active", 0.0) > 0.5
+    pressed = chan("steering_pressed", 0.0) > 0.5
+    blink = chan("blinker", 0.0) > 0.5
+    lane_change = chan("lane_change_state", 0.0) > 0.5
+    headway = chan("lead_time_headway_s", np.nan)
+    near_lead = np.isfinite(headway) & (headway < C.LEAD_HEADWAY_S)
+    bad = dilate_flags(pressed | blink | lane_change | near_lead, int(round(C.OVERRIDE_BUFFER_S * fs)))
+    clean = lat_active & ~bad
+    return erode_true(clean, int(round(C.ENGAGE_ERODE_S * fs)))
+
+
+def _roadedge_center(arrays, lk: str):
+    left = arrays.get(f"road_edge_left_{lk}")
+    right = arrays.get(f"road_edge_right_{lk}")
+    if left is None or right is None:
+        return np.full(len(arrays["t"]), np.nan)
+    return 0.5 * (np.asarray(left, dtype=float) + np.asarray(right, dtype=float))
+
+
+def _rms_band(sig, win_clean, fs, band):
+    return rms_masked(filter_continuous(sig, fs, band=band), win_clean)
+
+
+def discriminate_window(arrays, symptom: str, route_id: str, start_s: float, end_s: float,
+                        peak_s: float, *, lookahead_m: float = C.DISCRIM_LOOKAHEAD_M,
+                        band=None) -> DiscriminationWindow:
+    fs = C.FS_HZ
+    t = np.asarray(arrays["t"], dtype=float)
+    lk = f"y{int(lookahead_m)}"
+    if band is None:
+        band = _band_for(symptom)
+
+    win = (t >= start_s) & (t <= end_s)
+    clean = _clean_mask(arrays)
+    win_clean = win & clean
+    clean_fraction = float(np.mean(clean[win])) if win.any() else math.nan
+
+    v = np.asarray(arrays["v_ego"], dtype=float)
+    speed_mph = float(np.nanmedian(v[win]) * C.MPS_TO_MPH) if win.any() else math.nan
+
+    model_curv = offset_to_curvature(arrays[f"model_{lk}"], lookahead_m)
+    lane_curv = offset_to_curvature(arrays[f"lane_center_{lk}"], lookahead_m)
+    roadedge_curv = offset_to_curvature(_roadedge_center(arrays, lk), lookahead_m)
+    desired = np.asarray(arrays["desired_curvature"], dtype=float)
+    cp_final = np.asarray(arrays.get("cp_final_command", np.full(len(t), np.nan)), dtype=float)
+    can_yaw_curv = path_curvature_from_rate(arrays["yaw_rate"], v)
+    cal_yaw_curv = path_curvature_from_rate(arrays.get("yaw_rate_calibrated", np.full(len(t), np.nan)), v)
+    gps_curv = gps_path_curvature(arrays["lat"], arrays["lon"], v)
+    steering = np.asarray(arrays["steering_angle_deg"], dtype=float)
+
+    model_b = filter_continuous(model_curv, fs, band=band)
+    lane_b = filter_continuous(lane_curv, fs, band=band)
+    indep_src = cal_yaw_curv if np.isfinite(cal_yaw_curv[win]).sum() >= int(fs * 3) else can_yaw_curv
+    indep_b = filter_continuous(indep_src, fs, band=band)
+
+    mvl_corr, mvl_lag = xcorr_best(np.where(win_clean, model_b, np.nan), np.where(win_clean, lane_b, np.nan), fs)
+    lvi_corr, lvi_lag = xcorr_best(np.where(win_clean, lane_b, np.nan), np.where(win_clean, indep_b, np.nan), fs)
+
+    lane_rms = _rms_band(lane_curv, win_clean, fs, band)
+    model_rms = _rms_band(model_curv, win_clean, fs, band)
+    residual = model_b - lane_b
+    residual_rms = rms_masked(residual, win_clean)
+    residual_ratio = residual_rms / lane_rms if (np.isfinite(lane_rms) and lane_rms > 0) else math.nan
+
+    road_lp = filter_continuous(can_yaw_curv, fs, lowpass_hz=C.ROAD_LP_HZ)
+    road_vals = np.abs(road_lp[win_clean])
+    road_vals = road_vals[np.isfinite(road_vals)]
+    road_level = float(np.median(road_vals)) if len(road_vals) else math.nan
+
+    lane_prob_l = np.asarray(arrays.get("lane_prob_left", np.full(len(t), np.nan)), dtype=float)
+    lane_prob_r = np.asarray(arrays.get("lane_prob_right", np.full(len(t), np.nan)), dtype=float)
+    lane_ok = (np.nanmedian(lane_prob_l[win]) >= 0.5) and (np.nanmedian(lane_prob_r[win]) >= 0.5)
+    straight_clean = int(
+        np.isfinite(road_level) and road_level < C.ROAD_CURV_ABS_MAX_1PM
+        and bool(lane_ok) and np.isfinite(clean_fraction) and clean_fraction >= 0.8
+    )
+
+    coh = C.DISCRIM_ROAD_COHERENCE_MIN
+    if not (np.isfinite(lane_rms) and np.isfinite(model_rms)):
+        label = "insufficient"
+    elif np.isfinite(residual_ratio) and residual_ratio >= C.DISCRIM_ARTIFACT_RESIDUAL_RATIO:
+        label = "artifact_like"
+    elif np.isfinite(mvl_corr) and abs(mvl_corr) >= coh and np.isfinite(lvi_corr) and abs(lvi_corr) >= coh:
+        label = "road_like"
+    else:
+        label = "ambiguous"
+
+    course = gps_course_deg(arrays["lat"], arrays["lon"])
+    heading_bin = int(np.nanmedian(heading_bin_deg(course[win], C.HEADING_BIN_DEG))) if win.any() else -1
+    cell_vals = gps_cells(arrays["lat"], arrays["lon"], C.GPS_CELL_M)[win]
+    cell_vals = cell_vals[np.isfinite(cell_vals)]
+    gps_cell = float(np.median(cell_vals)) if len(cell_vals) else math.nan
+    speed_bin = int(speed_mph // C.SPEED_BIN_MPH) if np.isfinite(speed_mph) else -1
+
+    return DiscriminationWindow(
+        symptom=symptom, route_id=route_id, start_s=float(start_s), end_s=float(end_s),
+        peak_s=float(peak_s), speed_mph_median=speed_mph, lookahead_m=float(lookahead_m),
+        gps_cell=gps_cell, heading_bin=heading_bin, speed_bin=speed_bin,
+        road_curv_level_1pm=road_level,
+        model_curv_rms_1pm=model_rms, lane_curv_rms_1pm=lane_rms,
+        roadedge_curv_rms_1pm=_rms_band(roadedge_curv, win_clean, fs, band),
+        desired_rms_1pm=_rms_band(desired, win_clean, fs, band),
+        cp_final_rms_1pm=_rms_band(cp_final, win_clean, fs, band),
+        can_yaw_curv_rms_1pm=_rms_band(can_yaw_curv, win_clean, fs, band),
+        cal_yaw_curv_rms_1pm=_rms_band(cal_yaw_curv, win_clean, fs, band),
+        gps_curv_rms_1pm=_rms_band(gps_curv, win_clean, fs, band),
+        steering_band_rms_deg=_rms_band(steering, win_clean, fs, band),
+        model_vs_lane_corr=mvl_corr, model_vs_lane_lag_s=mvl_lag,
+        lane_vs_independent_corr=lvi_corr, lane_vs_independent_lag_s=lvi_lag,
+        model_minus_lane_residual_rms_1pm=residual_rms, model_residual_over_lane=residual_ratio,
+        spectral_peak_hz=spectral_peak_hz(np.where(win_clean, lane_b, np.nan), fs, band),
+        clean_fraction=clean_fraction, straight_clean=straight_clean, tentative_label=label,
+    )

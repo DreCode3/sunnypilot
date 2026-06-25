@@ -90,3 +90,62 @@ def test_xcorr_best_returns_nan_on_flat_signal():
     b = np.zeros(200)
     corr, lag_s = D.xcorr_best(a, b, fs, max_lag_s=2.0)
     assert math.isnan(corr) and math.isnan(lag_s)
+
+
+def _synthetic_arrays(*, model_extra_wobble: bool):
+    """Build a 30 s, 20 Hz route dict with a 0.2 Hz weave.
+
+    Road case: lane center, model path, and realized yaw all carry the same 0.2 Hz wobble.
+    Artifact case: the model path carries an EXTRA wobble not present in the lane center
+    or the realized yaw (i.e. the planner invents motion).
+    """
+    fs = 20.0
+    t = np.arange(0, 30, 1 / fs)
+    L = 20.0
+    f = 0.2
+    v = np.full_like(t, 13.0)  # ~29 mph
+    base_offset = 0.30 * np.sin(2 * np.pi * f * t)          # lane-center lateral offset (m)
+    lane_curv = 2 * base_offset / (L ** 2)
+    model_offset = base_offset.copy()
+    if model_extra_wobble:
+        model_offset = base_offset + 0.30 * np.sin(2 * np.pi * 0.27 * t + 1.0)
+    yaw_rate = (2 * base_offset / (L ** 2)) * v              # realized curvature * v
+    n = len(t)
+    a = {
+        "t": t.astype(np.float32),
+        "v_ego": v.astype(np.float32),
+        "yaw_rate": yaw_rate.astype(np.float32),
+        "yaw_rate_calibrated": yaw_rate.astype(np.float32),
+        "lat": (34.0 + np.cumsum(np.full(n, 1e-6))).astype(np.float32),
+        "lon": np.full(n, -84.0, dtype=np.float32),
+        "desired_curvature": lane_curv.astype(np.float32),
+        "cp_final_command": (0.85 * lane_curv).astype(np.float32),
+        "steering_angle_deg": (10.0 * base_offset).astype(np.float32),
+        "lat_active": np.ones(n, dtype=np.float32),
+        "steering_pressed": np.zeros(n, dtype=np.float32),
+        "blinker": np.zeros(n, dtype=np.float32),
+        "lane_change_state": np.zeros(n, dtype=np.float32),
+        "lead_time_headway_s": np.full(n, 5.0, dtype=np.float32),
+        "lane_prob_left": np.full(n, 0.9, dtype=np.float32),
+        "lane_prob_right": np.full(n, 0.9, dtype=np.float32),
+    }
+    for key, off in (("model", model_offset), ("lane_center", base_offset)):
+        a[f"{key}_y20"] = off.astype(np.float32)
+    a["road_edge_left_y20"] = (base_offset - 1.8).astype(np.float32)
+    a["road_edge_right_y20"] = (base_offset + 1.8).astype(np.float32)
+    return a
+
+
+def test_discriminate_window_labels_road_like_when_all_move_together():
+    a = _synthetic_arrays(model_extra_wobble=False)
+    rec = D.discriminate_window(a, "weave_10_70", "route_syn", 2.0, 28.0, 15.0)
+    assert rec.tentative_label == "road_like"
+    assert abs(rec.model_vs_lane_corr) >= 0.6
+    assert abs(rec.lane_vs_independent_corr) >= 0.6
+
+
+def test_discriminate_window_labels_artifact_like_when_model_adds_motion():
+    a = _synthetic_arrays(model_extra_wobble=True)
+    rec = D.discriminate_window(a, "weave_10_70", "route_syn", 2.0, 28.0, 15.0)
+    assert rec.tentative_label == "artifact_like"
+    assert rec.model_residual_over_lane >= 0.5
