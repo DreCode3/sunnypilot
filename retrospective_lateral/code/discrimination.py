@@ -58,3 +58,69 @@ def gps_course_deg(lat_deg, lon_deg):
     # invalidate the gap samples and their immediate neighbors.
     course[dilate_flags(~ok, 1)] = np.nan
     return course
+
+
+def path_curvature_from_rate(rate, v_mps, min_speed_mps: float = C.DISCRIM_MIN_SPEED_MPS):
+    """Realized path curvature = angular rate / speed (1/m). NaN below the speed guard.
+
+    Use with CAN yawRate or calibrated yawRate to get a vision-model-independent path.
+    """
+    rate = np.asarray(rate, dtype=float)
+    v = np.asarray(v_mps, dtype=float)
+    out = np.full(rate.shape, np.nan)
+    ok = np.isfinite(rate) & np.isfinite(v) & (v >= float(min_speed_mps))
+    out[ok] = rate[ok] / v[ok]
+    return out
+
+
+def gps_path_curvature(lat_deg, lon_deg, v_mps, fs_hz: float = C.FS_HZ,
+                       min_speed_mps: float = C.DISCRIM_MIN_SPEED_MPS):
+    """Heading-rate curvature from GPS course (1/m). Fully model- and EPAS-independent.
+
+    Coarse/noisy; used only as a third independent corroborator, not a primary metric.
+    """
+    course = gps_course_deg(lat_deg, lon_deg)
+    rate = np.full(course.shape, np.nan)
+    ok = np.isfinite(course)
+    if ok.sum() >= 3:
+        unwrapped = np.unwrap(np.radians(course[ok]))
+        rate[ok] = np.gradient(unwrapped) * float(fs_hz)
+    return path_curvature_from_rate(rate, v_mps, min_speed_mps=min_speed_mps)
+
+
+def xcorr_best(a, b, fs_hz: float, max_lag_s: float = C.DISCRIM_MAX_LAG_S):
+    """Best Pearson correlation over integer lags on the largest shared finite run.
+
+    Returns (corr, lag_s). lag_s > 0 means `a` leads `b`. (nan, nan) if undecidable.
+    """
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    min_len = max(12, int(fs_hz * 3))
+    regions = contiguous_regions(np.isfinite(a) & np.isfinite(b), min_len=min_len)
+    if not regions:
+        return (math.nan, math.nan)
+    s, e = max(regions, key=lambda r: r[1] - r[0])
+    aa = a[s:e]
+    bb = b[s:e]
+    n = len(aa)
+    if np.std(aa) == 0 or np.std(bb) == 0:
+        return (math.nan, math.nan)
+    max_lag = int(round(max_lag_s * fs_hz))
+    best_corr = -2.0
+    best_lag = 0
+    for lag in range(-max_lag, max_lag + 1):
+        if lag < 0:
+            x, y = aa[-lag:], bb[:n + lag]
+        elif lag > 0:
+            x, y = aa[:n - lag], bb[lag:]
+        else:
+            x, y = aa, bb
+        if len(x) < min_len or np.std(x) == 0 or np.std(y) == 0:
+            continue
+        c = float(np.corrcoef(x, y)[0, 1])
+        if c > best_corr:
+            best_corr = c
+            best_lag = lag
+    if best_corr < -1.5:
+        return (math.nan, math.nan)
+    return (best_corr, best_lag / fs_hz)

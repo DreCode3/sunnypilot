@@ -53,3 +53,32 @@ def test_gps_course_deg_all_nan_and_short_inputs_return_all_nan():
     assert np.all(np.isnan(course_all_nan))
     course_len1 = D.gps_course_deg(np.array([34.0]), np.array([-84.0]))
     assert np.all(np.isnan(course_len1))
+
+
+def test_path_curvature_from_rate_guards_low_speed():
+    rate = np.array([0.1, 0.1, 0.1])
+    v = np.array([10.0, 1.0, np.nan])  # 0.1/10 = 0.01; v=1 < 1.5 guard -> nan; nan -> nan
+    out = D.path_curvature_from_rate(rate, v, min_speed_mps=1.5)
+    assert math.isclose(out[0], 0.01, rel_tol=1e-9)
+    assert np.isnan(out[1])
+    assert np.isnan(out[2])
+
+
+def test_xcorr_best_recovers_known_lag_and_sign():
+    fs = 20.0
+    t = np.arange(0, 30, 1 / fs)
+    f = 0.2
+    a = np.sin(2 * np.pi * f * t)
+    d = 6  # samples; b is a delayed by d samples (a leads b)
+    b = np.concatenate([np.full(d, np.nan), a[:-d]])
+    corr, lag_s = D.xcorr_best(a, b, fs, max_lag_s=2.0)
+    assert corr > 0.95
+    assert abs(lag_s - d / fs) < 1.5 / fs  # positive => a leads b
+
+
+def test_xcorr_best_returns_nan_on_flat_signal():
+    fs = 20.0
+    a = np.ones(200)
+    b = np.zeros(200)
+    corr, lag_s = D.xcorr_best(a, b, fs, max_lag_s=2.0)
+    assert math.isnan(corr) and math.isnan(lag_s)
