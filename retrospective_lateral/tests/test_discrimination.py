@@ -2,6 +2,7 @@ import math
 import warnings
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from retrospective_lateral.code import discrimination as D
@@ -247,3 +248,23 @@ def test_frequency_speed_slope_guard_paths_return_not_flat_nan_slope():
     assert res_zv["n"] == 8
     assert res_zv["flat"] is False
     assert math.isnan(res_zv["slope_hz_per_mph"])
+
+
+def test_select_top_episodes_ranks_and_caps_per_symptom():
+    df = pd.DataFrame({
+        "route_id": [f"route_{i}" for i in range(6)],
+        "symptom": ["weave_10_70"] * 3 + ["low_speed_wheel_swing"] * 3,
+        "status": ["ok"] * 6,
+        "start_s": [10.0, 20.0, 30.0, 40.0, 50.0, 60.0],
+        "end_s": [40.0, 50.0, 60.0, 50.0, 60.0, 70.0],
+        "peak_s": [25.0, 35.0, 45.0, 45.0, 55.0, 65.0],
+        "speed_mph_median": [30.0, 40.0, 50.0, 3.0, 4.0, 5.0],
+        "steering_peak_to_peak_deg": [np.nan, np.nan, np.nan, 12.0, 20.0, 8.0],
+        "path_curvature_band_rms_1e4": [5.0, 9.0, 2.0, np.nan, np.nan, np.nan],
+    })
+    sel = D.select_top_episodes(df, top_n=2)
+    weave = [e for e in sel if e["symptom"] == "weave_10_70"]
+    low = [e for e in sel if e["symptom"] == "low_speed_wheel_swing"]
+    assert len(weave) == 2 and len(low) == 2
+    assert weave[0]["route_id"] == "route_1"   # highest path RMS (9.0)
+    assert low[0]["route_id"] == "route_4"     # highest steering p2p (20.0)

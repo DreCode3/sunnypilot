@@ -6,11 +6,15 @@ to retrospective_lateral/results/. Imports nothing from the vehicle-control stac
 
 from __future__ import annotations
 
+import argparse
+import json
 import math
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from itertools import combinations
+from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 from retrospective_lateral.code import config as C
 from retrospective_lateral.code.signal_utils import (
@@ -416,3 +420,117 @@ def classify_source(record: dict, repro_fraction: float, freq_flat: bool) -> tup
     if freq_flat and int(record.get("straight_clean", 0)) == 1:
         return ("loop_limit_cycle_C", "fixed-frequency oscillation on a straight, clean, lead-free road")
     return ("ambiguous", "no single test decisive")
+
+
+def select_top_episodes(catalog: "pd.DataFrame", top_n: int = C.DISCRIM_TOP_N_PER_SYMPTOM) -> list:
+    ok = catalog[catalog.get("status", "ok").astype(str) == "ok"] if "status" in catalog else catalog
+    episodes: list[dict] = []
+    for symptom, rank_col in (("weave_10_70", "path_curvature_band_rms_1e4"),
+                              ("low_speed_wheel_swing", "steering_peak_to_peak_deg")):
+        sub = ok[ok["symptom"] == symptom].copy()
+        if rank_col in sub:
+            sub = sub.sort_values(rank_col, ascending=False, na_position="last")
+        for _, row in sub.head(top_n).iterrows():
+            episodes.append({
+                "symptom": symptom, "route_id": str(row["route_id"]),
+                "start_s": float(row["start_s"]), "end_s": float(row["end_s"]),
+                "peak_s": float(row.get("peak_s", row["start_s"])),
+            })
+    return episodes
+
+
+def _load_cache(cache_root: Path, route_id: str):
+    npz = cache_root / f"{route_id}.npz"
+    if not npz.exists():
+        return None
+    with np.load(npz) as data:
+        return {k: data[k] for k in data.files}
+
+
+def build_discrimination_outputs(report_root: Path = C.DEFAULT_REPORT_ROOT,
+                                 cache_root: Path = C.DEFAULT_CACHE_ROOT,
+                                 top_n: int = C.DISCRIM_TOP_N_PER_SYMPTOM) -> dict:
+    report_root.mkdir(parents=True, exist_ok=True)
+    catalog = pd.read_csv(report_root / "symptom_catalog.csv")
+    episodes = select_top_episodes(catalog, top_n=top_n)
+
+    records: list[dict] = []
+    profiles: dict[str, dict] = {}   # episode_label -> spatial profile
+    arrays_cache: dict[str, dict] = {}
+    for ep in episodes:
+        rid = ep["route_id"]
+        arrays = arrays_cache.get(rid) or _load_cache(cache_root, rid)
+        if arrays is None:
+            continue
+        arrays_cache[rid] = arrays
+        rec = discriminate_window(arrays, ep["symptom"], rid, ep["start_s"], ep["end_s"], ep["peak_s"])
+        label = f"{rid}@{ep['peak_s']:.1f}"
+        row = asdict(rec)
+        row["episode_label"] = label
+        records.append(row)
+        profiles[label] = spatial_curvature_profile(arrays, ep["start_s"], ep["end_s"], _band_for(ep["symptom"]))
+
+    records_df = pd.DataFrame(records)
+    records_df.to_csv(report_root / "discrimination_window_records.csv", index=False)
+
+    # Cross-pass reproducibility: every pair of episodes (different routes) sharing GPS cells.
+    repro_rows: list[dict] = []
+    best_repro: dict[str, float] = {}
+    labels = list(profiles)
+    for i in range(len(labels)):
+        for j in range(i + 1, len(labels)):
+            la, lb = labels[i], labels[j]
+            if la.split("@")[0] == lb.split("@")[0]:
+                continue  # same route is not an independent pass
+            res = cross_pass_reproducibility([profiles[la], profiles[lb]], key="lane")
+            if res["n_pairs"] == 0:
+                continue
+            repro_rows.append({"episode_a": la, "episode_b": lb, **res})
+            for lab in (la, lb):
+                prev = best_repro.get(lab, float("-inf"))
+                if np.isfinite(res["median_pairwise_corr"]) and res["median_pairwise_corr"] > prev:
+                    best_repro[lab] = res["median_pairwise_corr"]
+    pd.DataFrame(repro_rows).to_csv(report_root / "discrimination_repeat_pass.csv", index=False)
+
+    # Frequency-vs-speed per symptom.
+    freq_rows = []
+    for symptom in ("weave_10_70", "low_speed_wheel_swing"):
+        sub = [r for r in records if r["symptom"] == symptom]
+        freq_rows.append({"symptom": symptom, **frequency_speed_slope(sub)})
+    freq_df = pd.DataFrame(freq_rows)
+    freq_df.to_csv(report_root / "discrimination_frequency_speed.csv", index=False)
+    freq_flat_by_symptom = {r["symptom"]: bool(r["flat"]) for r in freq_rows}
+
+    # Final per-episode classification.
+    class_rows = []
+    for r in records:
+        repro = best_repro.get(r["episode_label"], float("nan"))
+        label, why = classify_source(r, repro, freq_flat_by_symptom.get(r["symptom"], False))
+        class_rows.append({"episode_label": r["episode_label"], "symptom": r["symptom"],
+                           "route_id": r["route_id"], "speed_mph_median": r["speed_mph_median"],
+                           "tentative_label": r["tentative_label"], "best_repro_corr": repro,
+                           "source_label": label, "reason": why})
+    class_df = pd.DataFrame(class_rows)
+    class_df.to_csv(report_root / "discrimination_episode_classification.csv", index=False)
+
+    summary = (class_df.groupby(["symptom", "source_label"]).size()
+               .reset_index(name="episodes") if len(class_df) else pd.DataFrame())
+    summary.to_csv(report_root / "discrimination_summary.csv", index=False)
+
+    return {"episodes": len(records), "repeat_pass_pairs": len(repro_rows),
+            "classified": len(class_rows)}
+
+
+def main(argv: list | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Offline model/path-vs-road discrimination (analysis-only)")
+    parser.add_argument("--report-root", type=Path, default=C.DEFAULT_REPORT_ROOT)
+    parser.add_argument("--cache-root", type=Path, default=C.DEFAULT_CACHE_ROOT)
+    parser.add_argument("--top-n", type=int, default=C.DISCRIM_TOP_N_PER_SYMPTOM)
+    args = parser.parse_args(argv)
+    result = build_discrimination_outputs(args.report_root, args.cache_root, args.top_n)
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
