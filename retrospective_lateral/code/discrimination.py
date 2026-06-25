@@ -161,7 +161,7 @@ class DiscriminationWindow:
     model_residual_over_lane: float
     spectral_peak_hz: float
     clean_fraction: float
-    straight_clean: int
+    straight_clean: int  # 0/1 flag (int for DataFrame/CSV compatibility)
     tentative_label: str
 
 
@@ -213,8 +213,16 @@ def discriminate_window(arrays, symptom: str, route_id: str, start_s: float, end
     win_clean = win & clean
     clean_fraction = float(np.mean(clean[win])) if win.any() else math.nan
 
+    def _finite_median(x, mask):
+        # Median over finite values under `mask`; nan for empty/all-NaN. Avoids the
+        # RuntimeWarning('All-NaN slice') that np.nanmedian emits on degenerate windows.
+        vals = np.asarray(x, dtype=float)[mask]
+        vals = vals[np.isfinite(vals)]
+        return float(np.median(vals)) if len(vals) else math.nan
+
     v = np.asarray(arrays["v_ego"], dtype=float)
-    speed_mph = float(np.nanmedian(v[win]) * C.MPS_TO_MPH) if win.any() else math.nan
+    speed_med = _finite_median(v, win)
+    speed_mph = speed_med * C.MPS_TO_MPH if np.isfinite(speed_med) else math.nan
 
     model_curv = offset_to_curvature(arrays[f"model_{lk}"], lookahead_m)
     lane_curv = offset_to_curvature(arrays[f"lane_center_{lk}"], lookahead_m)
@@ -245,16 +253,19 @@ def discriminate_window(arrays, symptom: str, route_id: str, start_s: float, end
     road_vals = road_vals[np.isfinite(road_vals)]
     road_level = float(np.median(road_vals)) if len(road_vals) else math.nan
 
-    lane_prob_l = np.asarray(arrays.get("lane_prob_left", np.full(len(t), np.nan)), dtype=float)
-    lane_prob_r = np.asarray(arrays.get("lane_prob_right", np.full(len(t), np.nan)), dtype=float)
-    lane_ok = (np.nanmedian(lane_prob_l[win]) >= 0.5) and (np.nanmedian(lane_prob_r[win]) >= 0.5)
+    lane_prob_l = arrays.get("lane_prob_left", np.full(len(t), np.nan))
+    lane_prob_r = arrays.get("lane_prob_right", np.full(len(t), np.nan))
+    med_l = _finite_median(lane_prob_l, win)
+    med_r = _finite_median(lane_prob_r, win)
+    lane_ok = np.isfinite(med_l) and med_l >= 0.5 and np.isfinite(med_r) and med_r >= 0.5
+    # int (0/1) so the dataclass serializes cleanly to a DataFrame/CSV column.
     straight_clean = int(
         np.isfinite(road_level) and road_level < C.ROAD_CURV_ABS_MAX_1PM
         and bool(lane_ok) and np.isfinite(clean_fraction) and clean_fraction >= 0.8
     )
 
     coh = C.DISCRIM_ROAD_COHERENCE_MIN
-    if not (np.isfinite(lane_rms) and np.isfinite(model_rms)):
+    if not (np.isfinite(lane_rms) and np.isfinite(model_rms)) or (lane_rms == 0.0 and model_rms == 0.0):
         label = "insufficient"
     elif np.isfinite(residual_ratio) and residual_ratio >= C.DISCRIM_ARTIFACT_RESIDUAL_RATIO:
         label = "artifact_like"

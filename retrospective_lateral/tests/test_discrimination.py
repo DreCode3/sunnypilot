@@ -1,4 +1,5 @@
 import math
+import warnings
 
 import numpy as np
 import pytest
@@ -149,3 +150,17 @@ def test_discriminate_window_labels_artifact_like_when_model_adds_motion():
     rec = D.discriminate_window(a, "weave_10_70", "route_syn", 2.0, 28.0, 15.0)
     assert rec.tentative_label == "artifact_like"
     assert rec.model_residual_over_lane >= 0.5
+
+
+def test_discriminate_window_missing_optional_channels_no_warning():
+    # A minimal arrays dict that drops optional channels (lane_prob_*, cp_final_command,
+    # yaw_rate_calibrated) must still produce a valid record and emit no warnings.
+    a = _synthetic_arrays(model_extra_wobble=False)
+    for k in ("lane_prob_left", "lane_prob_right", "cp_final_command", "yaw_rate_calibrated"):
+        a.pop(k, None)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # any warning becomes an exception
+        rec = D.discriminate_window(a, "weave_10_70", "route_syn", 2.0, 28.0, 15.0)
+    assert rec.straight_clean in (0, 1)
+    # lane_prob_* absent -> lane_ok cannot be confirmed -> not straight_clean.
+    assert rec.straight_clean == 0
