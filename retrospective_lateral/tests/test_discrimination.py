@@ -164,3 +164,32 @@ def test_discriminate_window_missing_optional_channels_no_warning():
     assert rec.straight_clean in (0, 1)
     # lane_prob_* absent -> lane_ok cannot be confirmed -> not straight_clean.
     assert rec.straight_clean == 0
+
+
+def test_spatial_curvature_profile_bins_by_gps_cell():
+    a = _synthetic_arrays(model_extra_wobble=False)
+    # Spread the route across multiple GPS cells by moving north steadily.
+    n = len(a["t"])
+    a["lat"] = (34.0 + np.arange(n) * 5e-5).astype(np.float32)
+    prof = D.spatial_curvature_profile(a, 2.0, 28.0, D._band_for("weave_10_70"))
+    assert len(prof) >= 2
+    any_cell = next(iter(prof.values()))
+    assert "lane" in any_cell and "model" in any_cell and "n" in any_cell
+
+
+def test_cross_pass_reproducibility_high_for_identical_profiles():
+    cells = [float(i) for i in range(10)]
+    prof_a = {c: {"lane": math.sin(c), "model": 0.0, "n": 5} for c in cells}
+    prof_b = {c: {"lane": math.sin(c), "model": 0.0, "n": 5} for c in cells}
+    res = D.cross_pass_reproducibility([prof_a, prof_b], key="lane")
+    assert res["n_shared_cells"] >= 4
+    assert res["median_pairwise_corr"] > 0.95
+    assert res["reproducible"] is True
+
+
+def test_cross_pass_reproducibility_low_for_independent_noise():
+    cells = [float(i) for i in range(12)]
+    prof_a = {c: {"lane": math.sin(c), "model": 0.0, "n": 5} for c in cells}
+    prof_b = {c: {"lane": math.cos(3 * c + 1.7), "model": 0.0, "n": 5} for c in cells}
+    res = D.cross_pass_reproducibility([prof_a, prof_b], key="lane")
+    assert res["reproducible"] is False

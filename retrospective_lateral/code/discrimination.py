@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from itertools import combinations
 
 import numpy as np
 
@@ -300,3 +301,72 @@ def discriminate_window(arrays, symptom: str, route_id: str, start_s: float, end
         spectral_peak_hz=spectral_peak_hz(np.where(win_clean, lane_b, np.nan), fs, band),
         clean_fraction=clean_fraction, straight_clean=straight_clean, tentative_label=label,
     )
+
+
+def spatial_curvature_profile(arrays, start_s: float, end_s: float, band,
+                              *, lookahead_m: float = C.DISCRIM_LOOKAHEAD_M,
+                              cell_m: float = C.GPS_CELL_M) -> dict:
+    """Mean band-filtered lane/model curvature per GPS cell over a window.
+
+    Keying the wobble to physical GPS cells (not time) lets two passes over the same
+    road be compared. A wobble that reproduces by cell across passes is a road feature.
+    """
+    fs = C.FS_HZ
+    t = np.asarray(arrays["t"], dtype=float)
+    lk = f"y{int(lookahead_m)}"
+    win = (t >= start_s) & (t <= end_s)
+    lane_b = filter_continuous(offset_to_curvature(arrays[f"lane_center_{lk}"], lookahead_m), fs, band=band)
+    model_b = filter_continuous(offset_to_curvature(arrays[f"model_{lk}"], lookahead_m), fs, band=band)
+    cells = gps_cells(arrays["lat"], arrays["lon"], cell_m)
+    out: dict[float, dict] = {}
+    idx = np.flatnonzero(win)
+    for i in idx:
+        c = cells[i]
+        if not np.isfinite(c):
+            continue
+        bucket = out.setdefault(float(c), {"_lane": [], "_model": []})
+        if np.isfinite(lane_b[i]):
+            bucket["_lane"].append(float(lane_b[i]))
+        if np.isfinite(model_b[i]):
+            bucket["_model"].append(float(model_b[i]))
+    profile: dict[float, dict] = {}
+    for c, bucket in out.items():
+        if not bucket["_lane"]:
+            continue
+        profile[c] = {
+            "lane": float(np.mean(bucket["_lane"])),
+            "model": float(np.mean(bucket["_model"])) if bucket["_model"] else math.nan,
+            "n": len(bucket["_lane"]),
+        }
+    return profile
+
+
+def cross_pass_reproducibility(profiles: list, key: str = "lane",
+                               min_shared_cells: int = C.DISCRIM_REPRO_MIN_SHARED_CELLS) -> dict:
+    """Median pairwise Pearson correlation of per-cell profiles across passes.
+
+    profiles: list of {gps_cell: {"lane":..., "model":..., "n":...}}, one per pass.
+    """
+    corrs = []
+    shared_counts = []
+    for pa, pb in combinations(profiles, 2):
+        shared = sorted(set(pa) & set(pb))
+        shared = [c for c in shared if np.isfinite(pa[c].get(key, np.nan)) and np.isfinite(pb[c].get(key, np.nan))]
+        if len(shared) < min_shared_cells:
+            continue
+        va = np.array([pa[c][key] for c in shared])
+        vb = np.array([pb[c][key] for c in shared])
+        if np.std(va) == 0 or np.std(vb) == 0:
+            continue
+        corrs.append(float(np.corrcoef(va, vb)[0, 1]))
+        shared_counts.append(len(shared))
+    if not corrs:
+        return {"n_passes": len(profiles), "n_pairs": 0, "n_shared_cells": 0,
+                "median_pairwise_corr": math.nan, "reproducible": False}
+    median_corr = float(np.median(corrs))
+    return {
+        "n_passes": len(profiles), "n_pairs": len(corrs),
+        "n_shared_cells": int(np.median(shared_counts)),
+        "median_pairwise_corr": median_corr,
+        "reproducible": bool(median_corr >= C.DISCRIM_REPRO_FRACTION_ROAD),
+    }
