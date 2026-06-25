@@ -370,3 +370,48 @@ def cross_pass_reproducibility(profiles: list, key: str = "lane",
         "median_pairwise_corr": median_corr,
         "reproducible": bool(median_corr >= C.DISCRIM_REPRO_FRACTION_ROAD),
     }
+
+
+def frequency_speed_slope(records: list) -> dict:
+    """OLS slope of spectral_peak_hz on speed_mph_median across windows.
+
+    |slope| below the flat threshold => the weave frequency is speed-independent,
+    which is consistent with a fixed time-constant loop limit-cycle, not a road wavelength.
+    """
+    pts = [(float(r["speed_mph_median"]), float(r["spectral_peak_hz"])) for r in records
+           if np.isfinite(r.get("speed_mph_median", np.nan)) and np.isfinite(r.get("spectral_peak_hz", np.nan))]
+    if len(pts) < 5:
+        return {"n": len(pts), "slope_hz_per_mph": math.nan, "flat": False}
+    speeds = np.array([p[0] for p in pts])
+    peaks = np.array([p[1] for p in pts])
+    if np.std(speeds) == 0:
+        return {"n": len(pts), "slope_hz_per_mph": math.nan, "flat": False}
+    slope = float(np.polyfit(speeds, peaks, 1)[0])
+    return {"n": len(pts), "slope_hz_per_mph": slope,
+            "flat": bool(abs(slope) < C.DISCRIM_FREQ_FLAT_HZ_PER_MPH)}
+
+
+def classify_source(record: dict, repro_fraction: float, freq_flat: bool) -> tuple:
+    """Combine the three tests into a single A/B/C/ambiguous source label.
+
+    Priority: insufficient -> road (reproducible) -> artifact (model residual) ->
+    loop (fixed-frequency on a straight clean road) -> ambiguous.
+    """
+    lane_rms = record.get("lane_curv_rms_1pm", math.nan)
+    model_rms = record.get("model_curv_rms_1pm", math.nan)
+    if not (np.isfinite(lane_rms) and np.isfinite(model_rms)):
+        return ("insufficient_evidence", "lane/model curvature unavailable")
+
+    residual_ratio = record.get("model_residual_over_lane", math.nan)
+    mvl = abs(record.get("model_vs_lane_corr", 0.0) or 0.0)
+    lvi = abs(record.get("lane_vs_independent_corr", 0.0) or 0.0)
+    coh = C.DISCRIM_ROAD_COHERENCE_MIN
+    moving_together = mvl >= coh and lvi >= coh
+
+    if np.isfinite(repro_fraction) and repro_fraction >= C.DISCRIM_REPRO_FRACTION_ROAD and moving_together:
+        return ("road_feature_B", f"reproducible by location (corr={repro_fraction:.2f}); planned/perceived/realized coherent")
+    if np.isfinite(residual_ratio) and residual_ratio >= C.DISCRIM_ARTIFACT_RESIDUAL_RATIO and not moving_together:
+        return ("model_artifact_A", f"model adds motion beyond lane/road (residual/lane={residual_ratio:.2f})")
+    if freq_flat and int(record.get("straight_clean", 0)) == 1:
+        return ("loop_limit_cycle_C", "fixed-frequency oscillation on a straight, clean, lead-free road")
+    return ("ambiguous", "no single test decisive")

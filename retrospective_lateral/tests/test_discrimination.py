@@ -193,3 +193,34 @@ def test_cross_pass_reproducibility_low_for_independent_noise():
     prof_b = {c: {"lane": math.cos(3 * c + 1.7), "model": 0.0, "n": 5} for c in cells}
     res = D.cross_pass_reproducibility([prof_a, prof_b], key="lane")
     assert res["reproducible"] is False
+
+
+def test_frequency_speed_slope_flat_for_fixed_frequency():
+    # Fixed ~0.20 Hz peak across a range of speeds -> near-zero slope -> flat.
+    records = [{"speed_mph_median": s, "spectral_peak_hz": 0.20} for s in range(15, 65, 5)]
+    res = D.frequency_speed_slope(records)
+    assert res["flat"] is True
+    assert abs(res["slope_hz_per_mph"]) < D.C.DISCRIM_FREQ_FLAT_HZ_PER_MPH
+
+
+def test_frequency_speed_slope_not_flat_when_frequency_tracks_speed():
+    records = [{"speed_mph_median": s, "spectral_peak_hz": 0.10 + 0.01 * s} for s in range(15, 65, 5)]
+    res = D.frequency_speed_slope(records)
+    assert res["flat"] is False
+
+
+def test_classify_source_picks_road_artifact_loop_ambiguous():
+    base = dict(model_residual_over_lane=0.1, model_vs_lane_corr=0.9,
+                lane_vs_independent_corr=0.9, straight_clean=0, lane_curv_rms_1pm=1.0,
+                model_curv_rms_1pm=1.0)
+    # Road: reproducible by location
+    assert D.classify_source(base, repro_fraction=0.8, freq_flat=False)[0] == "road_feature_B"
+    # Artifact: model adds residual, not reproducible
+    art = {**base, "model_residual_over_lane": 0.9, "model_vs_lane_corr": 0.3, "lane_vs_independent_corr": 0.3}
+    assert D.classify_source(art, repro_fraction=float("nan"), freq_flat=False)[0] == "model_artifact_A"
+    # Loop: fixed frequency on a straight clean road, not reproducible, no residual
+    loop = {**base, "straight_clean": 1}
+    assert D.classify_source(loop, repro_fraction=float("nan"), freq_flat=True)[0] == "loop_limit_cycle_C"
+    # Ambiguous: nothing decisive
+    amb = {**base, "model_vs_lane_corr": 0.4, "lane_vs_independent_corr": 0.4}
+    assert D.classify_source(amb, repro_fraction=float("nan"), freq_flat=False)[0] == "ambiguous"
