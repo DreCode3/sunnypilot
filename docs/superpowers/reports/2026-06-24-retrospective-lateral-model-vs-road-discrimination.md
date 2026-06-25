@@ -8,13 +8,13 @@ Result counts per symptom (from `discrimination_summary.csv`):
 
 | symptom | model_artifact_A | road_feature_B | loop_limit_cycle_C | ambiguous | insufficient_evidence |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| weave_10_70 | 7 | 5 | 5 | 12 | 11 |
+| weave_10_70 | 7 | 7 | 5 | 10 | 11 |
 | low_speed_wheel_swing | 7 | 0 | 0 | 24 | 9 |
 
 **Recommendation: do not change driving code yet.** The discriminator is built, passes its
 unit suite, and produces real signal on the corpus, but at the current first-pass thresholds
-**most episodes are undecided** (weave 23/40 ambiguous+insufficient; low-speed 33/40), and the
-road-feature (B) test is **under-powered** — only 9 repeat-pass pairs exist across all 80
+**most episodes are undecided** (weave 21/40 ambiguous+insufficient; low-speed 33/40), and the
+road-feature (B) test is **under-powered** — only 23 repeat-pass pairs exist across all 80
 episodes, so the corpus cannot yet decisively separate A vs B vs C. These results are
 **preliminary and threshold-sensitive**. Per the decision rule below, the next deliverable is
 a **follow-up discrimination run targeting repeat-traversed corridors** (to power the B test),
@@ -41,10 +41,23 @@ not a vehicle-control change.
 - Classifier priority (`classify_source`): insufficient → road (reproducible AND coherent) →
   artifact (model adds residual AND not moving-together) → loop (flat frequency AND
   straight-clean-lead-free) → ambiguous. Run config: `top_n = 40` per symptom.
+- **`tentative_label` vs `source_label` (intentional divergence).** Each window carries a
+  per-window `tentative_label` (from `discriminate_window`) that is a *coherence-only pre-label*:
+  it checks artifact-before-road and **cannot** see cross-pass reproducibility. The authoritative
+  per-episode verdict is `source_label` (from `classify_source`), which checks
+  road(reproducible)-before-artifact and adds the cross-pass (B) test the per-window step lacks.
+  They therefore diverge by design — some rows in `discrimination_episode_classification.csv`
+  show `tentative_label=artifact_like` while `source_label=road_feature_B`. This is not a bug;
+  `source_label` is the one to read.
+- **`frequency_speed_slope` is corpus-wide.** The per-symptom spectral-peak-vs-speed slope is
+  computed over **all** that symptom's per-window records (not only the straight/clean ones), so
+  the "flat" weave slope is a population property of the whole weave corpus. The loop-cycle (C)
+  branch is independent of it: C additionally requires `straight_clean == 1` per episode, so a
+  flat corpus slope does not by itself label any episode C.
 
 ## Results
 - Window records: **80** (`discrimination_window_records.csv`, 31 cols);
-  repeat-pass pairs: **9** (`discrimination_repeat_pass.csv`, 7 cols).
+  repeat-pass pairs: **23** (`discrimination_repeat_pass.csv`, 7 cols).
 - Frequency-vs-speed slope (`discrimination_frequency_speed.csv`):
   - weave_10_70: **-0.000791 Hz/mph** (n = 17, **flat = True**).
   - low_speed_wheel_swing: **-0.005628 Hz/mph** (n = 16, **flat = False**).
@@ -55,24 +68,26 @@ not a vehicle-control change.
     independent realized motion. Highest residual ratios: `route_16` (weave, 33 mph,
     residual/lane = 2.79), `route_10@300.75` (low-speed, 2.9 mph, 1.81), `route_stock`
     (weave, 38 mph, 1.62), `route_b1` (weave, 55 mph, 1.48), `route_92` (weave, 47 mph, 1.45).
-  - **Road-feature (B) — 5 episodes, weave only** (`route_10`, `route_6a`, `route_7f`,
-    `route_9d`, `route_7b`), spanning 28–50 mph. Each is reproducible by location against at
-    least one other route's pass (best repro corr 0.86–1.00) *and* coherent across
-    planned/perceived/realized. **0 low-speed episodes reach B** — see the under-powered caveat.
+  - **Road-feature (B) — 7 episodes, weave only** (`route_a8`, `route_10`, `route_b5`,
+    `route_6a`, `route_7f`, `route_7b`, `route_0d`), spanning 28–50 mph. Each is reproducible by
+    location against at least one other route's pass (best repro corr 0.73–1.00) *and* coherent
+    across planned/perceived/realized. **0 low-speed episodes reach B** — see the under-powered
+    caveat.
   - **Loop-limit-cycle (C) — 5 episodes, weave only** (`route_1c`, `route_60`, `route_8d`;
     two routes appear at two windows each), at 13–21 mph: fixed-frequency oscillation on a
     straight, clean, lead-free road, consistent with the speed-independent weave slope.
-  - **Undecided — 56 episodes**: weave ambiguous 12 + insufficient 11 = 23/40; low-speed
+  - **Undecided — 54 episodes**: weave ambiguous 10 + insufficient 11 = 21/40; low-speed
     ambiguous 24 + insufficient 9 = 33/40. The discriminator is **conservative**: most episodes
     do not cross any single test's threshold at this first pass.
 
 ### Honest interpretation (do not over-read the raw counts)
-- **The B (road) test is under-powered.** Only 9 repeat-pass pairs exist across 80 episodes,
-  because the selected top-N episodes rarely share `>= 4` GPS cells across *different* routes.
-  Single-pass corridors get NaN reproducibility and **cannot** be classified B — this is a lack
-  of repeat coverage, **not** evidence against a road cause. The low B count (and the 0 low-speed
-  B) must not be read as "weave is mostly artifact/loop."
-- **High undecided share ⇒ preliminary.** With 23/40 weave and 33/40 low-speed episodes
+- **The B (road) test is under-powered.** Only 23 repeat-pass pairs exist across 80 episodes,
+  because the selected top-N episodes — severity-ranked and drawn from *different* routes — rarely
+  share `>= 4` GPS cells with each other. Single-pass corridors get NaN reproducibility and
+  **cannot** be classified B — this is a lack of repeat coverage, **not** evidence against a road
+  cause. The low B count (7 weave, and the 0 low-speed B) must not be read as "weave is mostly
+  artifact/loop."
+- **High undecided share ⇒ preliminary.** With 21/40 weave and 33/40 low-speed episodes
   ambiguous or insufficient at the current `DISCRIM_*` thresholds, the A/B/C breakdown is
   **threshold-sensitive** and not a stable population estimate.
 - **The flat weave slope is suggestive, not conclusive.** The weave peak sits near ~0.20 Hz and
@@ -87,7 +102,7 @@ This run is exactly the analysis the prior review (§7.1 step 1–2, §8 gate) d
 implementation plan. Applying that gate:
 
 - If a clear majority classify **B** (road feature) and reproduce by location → correction layer
-  is lane-centering target/filtering; plan a model/path change. **Not met:** only 5 weave B,
+  is lane-centering target/filtering; plan a model/path change. **Not met:** only 7 weave B,
   0 low-speed B, and the B test is under-powered.
 - If a clear majority classify **A** (model artifact) → correction layer is model selection /
   model-side path smoothing; plan an offline replay of a candidate model. **Not met:** only 14/80
@@ -96,7 +111,7 @@ implementation plan. Applying that gate:
   loop element (delay/filter/update cadence), still upstream of PI gains. **Not met:** only 5
   weave C, though the flat weave slope is a supporting clue.
 - If **ambiguous dominates** → the analysis is not yet decisive. **This is the current state**
-  (56/80 undecided), driven primarily by missing repeat-pass coverage.
+  (54/80 undecided), driven primarily by missing repeat-pass coverage.
 
 **Verdict: the gate does NOT flip.** Status remains *ready for further offline analysis — NOT
 ready for a vehicle-control implementation plan*, fully consistent with §8 of the prior review.
@@ -112,7 +127,7 @@ upstream factor) remains justified only if that powered offline run still cannot
 - `offset_to_curvature` is a small-angle (small-curvature arc) approximation.
 - Repeat-pass classification needs `>= DISCRIM_REPRO_MIN_SHARED_CELLS` (= 4) shared GPS cells
   between two *different-route* passes; single-pass corridors get NaN reproducibility and cannot
-  be classified B. Only 9 such pairs exist in this corpus — the B test is **under-powered**.
+  be classified B. Only 23 such pairs exist in this corpus — the B test is **under-powered**.
 - The 0.20 Hz "flat" weave-frequency signal is partly a band-detection artifact; it is suggestive
   of C, not proof.
 - Coverage limit: this run uses `top_n = 40` per symptom (80 episodes total). A wider or
@@ -129,19 +144,19 @@ expected (gitignored) CSV writes.
 1. Full retrospective test suite (no regressions):
    ```
    .venv311/bin/python -m pytest retrospective_lateral/tests -q
-   → 116 passed in 3.61s  (includes the 16 test_discrimination.py tests)
+   → 117 passed in 3.88s  (includes the 22 test_discrimination.py tests)
    ```
 
 2. Regenerate outputs over the real corpus:
    ```
    .venv311/bin/python -m retrospective_lateral.code.discrimination --top-n 40
-   → {"classified": 80, "episodes": 80, "repeat_pass_pairs": 9}
+   → {"classified": 80, "episodes": 80, "repeat_pass_pairs": 23}
    ```
 
 3. Verify CSV row/col counts and the classification breakdown:
    ```
    discrimination_window_records.csv          rows=80  cols=31
-   discrimination_repeat_pass.csv             rows=9   cols=7
+   discrimination_repeat_pass.csv             rows=23  cols=7
    discrimination_frequency_speed.csv         rows=2   cols=4
    discrimination_episode_classification.csv  rows=80  cols=8
    discrimination_summary.csv                 rows=8   cols=3
@@ -150,11 +165,11 @@ expected (gitignored) CSV writes.
      low_speed_wheel_swing  ambiguous              24
                             insufficient_evidence   9
                             model_artifact_A        7
-     weave_10_70            ambiguous              12
+     weave_10_70            ambiguous              10
                             insufficient_evidence  11
                             loop_limit_cycle_C      5
                             model_artifact_A        7
-                            road_feature_B          5
+                            road_feature_B          7
    ```
 
 4. Cleanliness / ignore checks:
