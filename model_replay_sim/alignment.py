@@ -39,6 +39,11 @@ def build_frame_timeline(route_id: str) -> tuple:
             fcount = int(FrameReader(str(fcam), pix_fmt="nv12").frame_count)
         except Exception:
             continue
+        ecam = seg / "ecamera.hevc"                    # wide cam may be absent/short
+        try:
+            wcount = int(FrameReader(str(ecam), pix_fmt="nv12").frame_count) if ecam.exists() else 0
+        except Exception:
+            wcount = 0
         wide_by_eof = {}
         road = []
         try:                                          # corrupt/truncated rlog → skip segment
@@ -55,7 +60,9 @@ def build_frame_timeline(route_id: str) -> tuple:
         for snum, sid, fid, eof in road:
             if sid >= fcount:                         # truncation guard
                 continue
-            rows.append(FrameRow(snum, sid, fid, eof, fcount, wide_by_eof.get(round(eof, 3))))
+            wsid = wide_by_eof.get(round(eof, 3))     # mirror road guard for wide cam:
+            esid = wsid if (wsid is not None and wsid < wcount) else None  # missing/short → None
+            rows.append(FrameRow(snum, sid, fid, eof, fcount, esid))
     rows.sort(key=lambda r: r.timestamp_eof_s)
     return tuple(rows)
 
