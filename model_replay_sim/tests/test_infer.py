@@ -193,3 +193,35 @@ def test_replay_window_cd210_route_b5_end_to_end():
     # deterministic across two runs (bit-identical)
     r2 = replay_window("CD210", "route_b5", win)
     np.testing.assert_array_equal(curv, np.asarray(r2["desired_curvature"], dtype=float))
+
+
+@pytest.mark.skipif(_SKIP, reason="route_b5 frames/npz or CD210 onnx not present locally")
+def test_big_img_sourced_from_real_wide_camera_not_road_proxy():
+    """The big_img wide sixchan must come from the REAL wide camera (ecamera.hevc), NOT the
+    old road-through-M_extra proxy. For a frame with an aligned wide index, the real-wide
+    sixchan must differ from the road-frame warped through the same wide transform."""
+    from model_replay_sim.alignment import build_frame_timeline, read_frame, read_wide_frame
+    from model_replay_sim.context import route_context
+    from model_replay_sim.warp import model_transform, frame_to_sixchan
+    from model_replay_sim.infer import _frame_dims
+
+    tl = build_frame_timeline("route_b5")
+    s16 = [r for r in tl if r.segment_num == 16 and r.ecamera_segment_id is not None]
+    if not s16:
+        pytest.skip("no aligned wide frame in route_b5 seg16")
+    r = s16[0]
+
+    ctx = route_context("route_b5")
+    M_extra = model_transform(ctx, wide=True)
+
+    road = np.asarray(read_frame("route_b5", r.segment_num, r.segment_id), np.uint8).ravel()
+    wide = np.asarray(read_wide_frame("route_b5", r.segment_num, r.ecamera_segment_id), np.uint8).ravel()
+    cam_w, cam_h = _frame_dims(road.size)
+    w_w, w_h = _frame_dims(wide.size)
+
+    proxy_big = frame_to_sixchan(road, cam_w, cam_h, M_extra)   # the OLD road-through-M_extra
+    real_big = frame_to_sixchan(wide, w_w, w_h, M_extra)        # the NEW real wide frame
+    assert real_big.shape == proxy_big.shape == (6, 128, 256)
+    # they must NOT be identical — the fix changed the big_img source
+    assert not np.array_equal(real_big, proxy_big), \
+        "big_img wide sixchan is identical to the road-through-M_extra proxy (fix not active)"

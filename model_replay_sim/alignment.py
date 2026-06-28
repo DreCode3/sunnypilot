@@ -82,8 +82,17 @@ def map_window_to_frames(route_id: str, mono_times, max_delta_s: float = C.MAX_F
         out.append(FrameAlignment(r.segment_num, r.segment_id, r.ecamera_segment_id))
     return out
 
-def read_frame(route_id: str, segment_num: int, segment_id: int):
-    """Read one road nv12 frame. (Callers that need many frames should open the FrameReader
-    once per segment; this is the simple per-frame accessor.)"""
+def read_frame(route_id: str, segment_num: int, segment_id: int, camera: str = "fcamera"):
+    """Read one nv12 frame from ``camera`` (default ``fcamera`` = road). (Callers that need
+    many frames should open the FrameReader once per segment; this is the simple per-frame
+    accessor.) ``camera`` may be ``"fcamera"`` (road) or ``"ecamera"`` (wide)."""
     seg = next(s for s in _seg_dirs(route_id) if _seg_num(s) == segment_num)
-    return FrameReader(str(seg / "fcamera.hevc"), pix_fmt="nv12").get(segment_id)
+    return FrameReader(str(seg / f"{camera}.hevc"), pix_fmt="nv12").get(segment_id)
+
+
+def read_wide_frame(route_id: str, segment_num: int, ecamera_segment_id: int):
+    """Read one wide-camera (``ecamera.hevc``) nv12 frame. The wide frame index
+    (``ecamera_segment_id``) is the EOF-aligned wide segmentId from
+    :func:`build_frame_timeline` (``FrameRow.ecamera_segment_id`` /
+    ``FrameAlignment.ecamera_index``), NOT the road ``segment_id``."""
+    return read_frame(route_id, segment_num, ecamera_segment_id, camera="ecamera")

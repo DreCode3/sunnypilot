@@ -407,7 +407,7 @@ def replay_window(bundle: str, route_id: str, mono_times) -> dict:
     Returns ``{"route_id","bundle","mono_time": (N,), "desired_curvature": (N,),
     "v_ego": (N,), "frames": [(seg_num,seg_id),...]}``.
     """
-    from model_replay_sim.alignment import map_window_to_frames, read_frame
+    from model_replay_sim.alignment import map_window_to_frames, read_frame, read_wide_frame
     from model_replay_sim.context import route_context
     from model_replay_sim.warp import model_transform, frame_to_sixchan
 
@@ -425,10 +425,11 @@ def replay_window(bundle: str, route_id: str, mono_times) -> dict:
 
     curvs = np.empty(len(mono_times), dtype=np.float64)
     prev_sixchan = None
-    # big_img path: CD210 wants 'big_img'; for this device (road=fcam, NOT main-wide) the
-    # wide camera frame would warp with M_extra. To keep Task 8 self-contained and bounded,
-    # we use the road frame warped through the wide transform as big_img when no ecam frame
-    # is threaded — the curvature target is anchor-validated in Task 10. (See concerns.)
+    # big_img path: CD210's far-field path/curvature prediction leans on the REAL WIDE camera
+    # (ecamera.hevc), so we feed the actual wide frame warped through M_extra. When the wide
+    # frame is missing/short for a given road frame (al.ecamera_index is None), we carry
+    # forward the previous wide sixchan; on the very first frame with no history we fall back
+    # once to the road-through-M_extra proxy. The road `img` path is untouched.
     prev_sixchan_big = None
     for i, (al, t, v) in enumerate(zip(aligns, mono_times, v_egos)):
         nv12 = read_frame(route_id, al.segment_num, al.segment_id)
@@ -438,7 +439,15 @@ def replay_window(bundle: str, route_id: str, mono_times) -> dict:
         img = _pair(prev_sixchan if prev_sixchan is not None else cur, cur)
         prev_sixchan = cur
 
-        cur_big = frame_to_sixchan(nv12, cam_w, cam_h, M_extra)
+        if al.ecamera_index is not None:
+            wide_nv12 = read_wide_frame(route_id, al.segment_num, al.ecamera_index)
+            wide_nv12 = np.asarray(wide_nv12, dtype=np.uint8).ravel()
+            w_w, w_h = _frame_dims(wide_nv12.size)
+            cur_big = frame_to_sixchan(wide_nv12, w_w, w_h, M_extra)
+        elif prev_sixchan_big is not None:
+            cur_big = prev_sixchan_big                              # carry forward last wide
+        else:
+            cur_big = frame_to_sixchan(nv12, cam_w, cam_h, M_extra)  # one-time proxy fallback
         big_img = _pair(prev_sixchan_big if prev_sixchan_big is not None else cur_big, cur_big)
         prev_sixchan_big = cur_big
 

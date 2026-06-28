@@ -1,9 +1,25 @@
 import glob
+import numpy as np
 import pytest
-from model_replay_sim.alignment import build_frame_timeline, map_window_to_frames
+from model_replay_sim.alignment import build_frame_timeline, map_window_to_frames, read_wide_frame
 
 def _route():
     return "route_8d" if glob.glob("explorer_st_logs/route_8d/0000008d--*--1/fcamera.hevc") else None
+
+def _b5():
+    return bool(glob.glob("explorer_st_logs/route_b5/000000b5--*--16/ecamera.hevc"))
+
+@pytest.mark.skipif(not _b5(), reason="no route_b5 ecamera frames")
+def test_read_wide_frame_returns_expected_nv12_shape():
+    # the wide camera (ecamera.hevc) decodes to the SAME nv12 size as the road cam on this
+    # device (1344x760 -> 1_532_160 bytes), so it feeds the same warp cam_w/cam_h.
+    tl = build_frame_timeline("route_b5")
+    s16 = [r for r in tl if r.segment_num == 16 and r.ecamera_segment_id is not None]
+    assert s16, "expected route_b5 seg16 rows with an aligned wide-frame index"
+    r = s16[0]
+    assert r.ecamera_segment_id == 0 and r.segment_id == 0    # documented seg16 alignment
+    wide = np.asarray(read_wide_frame("route_b5", r.segment_num, r.ecamera_segment_id), np.uint8).ravel()
+    assert wide.size == 1344 * 760 * 3 // 2
 
 @pytest.mark.skipif(_route() is None, reason="no route_8d frames")
 def test_timeline_uses_segmentId_not_roadcamerastate_count():
