@@ -19,3 +19,7 @@ zstandard==0.25.0
 requests==2.32.5
 tqdm==4.67.3
 pytest==9.0.2
+# model_replay_sim: ONNX model load/inference + parquet artifact IO
+onnx==1.22.0
+onnxruntime==1.27.0
+pyarrow==24.0.0
