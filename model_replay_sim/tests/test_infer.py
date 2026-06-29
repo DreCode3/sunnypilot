@@ -317,22 +317,24 @@ def test_step_returns_nan_on_nonfinite_v_ego():
 # C2/C3: loud guard for UNVALIDATED cross-model bundles                        #
 # --------------------------------------------------------------------------- #
 
-def test_warn_if_unvalidated_warns_for_nevada_and_opm7():
+def test_warn_if_unvalidated_warns_for_opm7():
     from model_replay_sim.infer import _warn_if_unvalidated
-    for b in ("Nevada", "OPM7"):
-        with pytest.warns(UserWarning, match="NOT fidelity-anchor-validated"):
-            _warn_if_unvalidated(b)
+    with pytest.warns(UserWarning, match="NOT fidelity-anchor-validated"):
+        _warn_if_unvalidated("OPM7")       # only OPM7 remains unvalidated
 
 
-def test_warn_if_unvalidated_silent_for_cd210(recwarn):
+def test_warn_if_unvalidated_silent_for_validated(recwarn):
     from model_replay_sim.infer import _warn_if_unvalidated
-    _warn_if_unvalidated("CD210")          # anchor_validated=True -> no warning
+    for b in ("CD210", "Nevada"):          # both anchor_validated=True -> no warning
+        _warn_if_unvalidated(b)
     assert len(recwarn) == 0, [str(w.message) for w in recwarn]
 
 
 def test_config_anchor_validated_flags():
+    # CD210 (route_b5 corr 0.993) and Nevada (route_c5 corr 0.990) have passing same-model
+    # anchors; OPM7 has no clean anchor (confirmed routes rotated off device, route_7f corr 0.925).
     assert C.BUNDLES["CD210"]["anchor_validated"] is True
-    assert C.BUNDLES["Nevada"]["anchor_validated"] is False
+    assert C.BUNDLES["Nevada"]["anchor_validated"] is True
     assert C.BUNDLES["OPM7"]["anchor_validated"] is False
 
 

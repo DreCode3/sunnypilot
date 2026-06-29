@@ -147,10 +147,11 @@ def test_trust_gate_true_when_all_validated(patched):
     assert res["unvalidated"] == []
 
 
-def test_trust_gate_false_when_only_unvalidated(patched):
-    res = CMP.compare_on_scene("route_b5", ["OPM7", "Nevada"])
+def test_trust_gate_false_when_any_unvalidated(patched):
+    # OPM7 is the only remaining unvalidated bundle (CD210, Nevada both anchor-validated).
+    res = CMP.compare_on_scene("route_b5", ["CD210", "OPM7"])
     assert res["trustworthy"] is False
-    assert set(res["unvalidated"]) == {"OPM7", "Nevada"}
+    assert set(res["unvalidated"]) == {"OPM7"}
 
 
 # --------------------------------------------------------------------------- #

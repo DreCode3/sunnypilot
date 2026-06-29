@@ -21,13 +21,14 @@ TINYGRAD_ENV = {"DEBUG": "0", "DEV": "CPU", "IMAGE": "0", "THREADS": "0"}
 # buffer_length = 5 if is_20hz else 2, sunnypilot/modeld_v2/modeld.py:75). 5 is the modern
 # 20Hz value; CD210=5 is ANCHOR-VALIDATED (sep-sweep: sep=4 -> band_ratio 1.008, corr 0.993).
 # Nevada/OPM7 default to 5 (assumed 20Hz) -- NOT anchor-validated (no same-model anchor).
-# anchor_validated: True ONLY for CD210, whose img_buffer_length=5 and mlsim handling are
-# proven by the same-model fidelity anchor (corr 0.993, band_ratio 1.008). Nevada/OPM7 have
-# NO same-model anchor -> their img_buffer_length (assumed 20Hz) and mlsim (derived from
-# output-key presence, not the device's generation>=11 rule) are UNVERIFIED; replaying them
-# warns loudly (infer.replay_window) because their weave number may be systematically wrong.
+# anchor_validated: True for a bundle whose img_buffer_length=5 and post-step are proven by a
+# same-model fidelity anchor. CD210: route_b5 corr 0.993, band_ratio 1.008. Nevada: route_c5
+# corr 0.990, band_ratio 1.060 (validated 2026-06-29 after pulling route_c5 video). OPM7 has
+# NO clean same-model anchor (confirmed-OPM7 routes rotated off the device; route_7f corr 0.925
+# unconfirmed-build) -> its img_buffer_length/mlsim are UNVERIFIED; replaying it warns loudly
+# (infer.replay_window) because its weave number may be systematically wrong.
 BUNDLES = {
   "CD210":  {"full_sha": "55f66e2246359c6593605399a0199d94d13ad90d", "repo": "commaai/openpilot",     "split": False, "internal_names": {"C210M", "CD210"}, "img_buffer_length": 5, "anchor_validated": True},
-  "Nevada": {"full_sha": "3193eac5e385aa010694a8ac192ff38ffe000193", "repo": "commaai/openpilot",     "split": False, "internal_names": {"NM", "Nevada"}, "img_buffer_length": 5, "anchor_validated": False},
+  "Nevada": {"full_sha": "3193eac5e385aa010694a8ac192ff38ffe000193", "repo": "commaai/openpilot",     "split": False, "internal_names": {"NM", "Nevada"}, "img_buffer_length": 5, "anchor_validated": True},
   "OPM7":   {"full_sha": "052692b25d63c5ddda276b5c2271383b6aff129f", "repo": "sunnypilot/sunnypilot", "split": True,  "internal_names": {"OPM7"}, "img_buffer_length": 5, "anchor_validated": False},
 }
