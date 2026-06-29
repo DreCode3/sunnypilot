@@ -23,8 +23,11 @@ each parsed by ``parse_{vision,policy}_outputs``).
 
 FIDELITY SCOPE: the faithful, anchor-targeted path is the 2-model (vision+policy) split
 used by CD210/Nevada. The OPM7 3-model split (vision + on_policy + off_policy) is a thin
-secondary path that is NOT implemented here (raises NotImplementedError) — see Task 8
-DONE_WITH_CONCERNS. The 2-model class is structured so adding it is additive.
+secondary path: for the weave/curvature comparison only ``vision -> on_policy`` matters,
+so on_policy slots in exactly where the 2-model policy was and off_policy is intentionally
+skipped (see BundleModel.__init__). OPM7 has no same-model fidelity anchor yet, so
+replay_window still emits the loud cross-model warning. The 2-model class is structured so
+adding the split path is additive.
 
 Analysis-only. Imports tinygrad — call under ``model_replay_sim.env`` semantics (set BEFORE
 the first tinygrad import); :func:`model_replay_sim.warp._ensure_tinygrad_env` arranges it.
@@ -170,8 +173,30 @@ class _CompiledModel:
 
 class BundleModel:
     """Loads + caches a bundle's compiled vision & policy models and runs them, returning
-    sliced+parsed named outputs. CD210/Nevada = 2-model (vision+policy). OPM7 = 3-model
-    split, NOT implemented (NotImplementedError) — see module docstring.
+    sliced+parsed named outputs.
+
+    CD210/Nevada = 2-model split: vision + ``driving_policy.onnx``.
+    OPM7 = 3-model split: vision + ``driving_on_policy.onnx`` (+ ``driving_off_policy.onnx``,
+    intentionally NOT loaded — see below). For both, ``self.policy`` is THE policy that emits
+    the trajectory ``plan`` that drives curvature, so all downstream machinery (``run_policy``,
+    ``ReplayState``, ``replay_window``, the buffer-pairing, curvature) is identical.
+
+    Why off_policy is skipped for the split (OPM7) path — the plan/curvature comparison needs
+    only ``vision -> on_policy``:
+      * The on_policy model produces the trajectory ``plan``; off_policy contributes only
+        perception (lane_lines / road_edges / lead). Verified from the materialized metadata:
+        on_policy output_slices = {plan, desire_state, pad}; off_policy = {plan, lane_lines,
+        lane_lines_prob, road_edges, lead, lead_prob, pad}.
+      * The production runner DROPS off_policy's plan when on_policy is present
+        (``off_policy_output.pop('plan', None)`` — sunnypilot/models/runners/tinygrad/
+        tinygrad_runner.py:116-127), so off_policy never contributes to ``plan``.
+      * The runner's ``if 'planplus' in outputs`` combine (tinygrad_runner.py:126-127) does
+        NOT fire for this commit: NEITHER on_policy NOR off_policy emits ``planplus`` (no such
+        key in either metadata output_slices). So the effective ``plan`` used for curvature =
+        on_policy's ``plan`` ALONE, and PLANPLUS_CONTROL is irrelevant for OPM7.
+      => off_policy provably cannot affect the plan/curvature; loading/running it would only
+         add cost. We skip it entirely. on_policy's input_shapes are identical to CD210's
+         policy, so the existing temporal machinery works UNCHANGED.
     """
 
     _CACHE: dict[str, "BundleModel"] = {}
@@ -180,19 +205,23 @@ class BundleModel:
         if bundle not in C.BUNDLES:
             raise KeyError(f"unknown bundle: {bundle!r} (known: {sorted(C.BUNDLES)})")
         self.bundle = bundle
-        if C.BUNDLES[bundle]["split"]:
-            raise NotImplementedError(
-                f"{bundle} is a 3-model split (vision+on_policy+off_policy); only the "
-                "2-model vision+policy path is implemented in Task 8 (CD210/Nevada). The "
-                "split path is sanity-only and not anchor-validated.")
+        self.split = bool(C.BUNDLES[bundle]["split"])
         d = _bundle_dir(bundle)
         _ensure_tinygrad_env()
         from openpilot.sunnypilot.modeld_v2.parse_model_outputs_split import Parser
         self._parser = Parser()
         self.vision = _CompiledModel(d / "driving_vision.onnx", d / "driving_vision.pkl",
                                      d / "driving_vision_metadata.pkl")
-        self.policy = _CompiledModel(d / "driving_policy.onnx", d / "driving_policy.pkl",
-                                     d / "driving_policy_metadata.pkl")
+        # The policy = the model that emits the plan: CD210/Nevada use driving_policy; the
+        # OPM7 split uses driving_on_policy (off_policy is perception-only and skipped, see
+        # the class docstring). on_policy's input_shapes / plan output match driving_policy
+        # exactly, so it slots in here unchanged.
+        if self.split:
+            self.policy = _CompiledModel(d / "driving_on_policy.onnx", d / "driving_on_policy.pkl",
+                                         d / "driving_on_policy_metadata.pkl")
+        else:
+            self.policy = _CompiledModel(d / "driving_policy.onnx", d / "driving_policy.pkl",
+                                         d / "driving_policy_metadata.pkl")
         # combined input shapes (vision img inputs + policy float inputs) — the source of
         # truth for ReplayState buffer construction (mirrors TinygradSplitRunner.input_shapes).
         self.input_shapes: dict = {**self.vision.input_shapes, **self.policy.input_shapes}

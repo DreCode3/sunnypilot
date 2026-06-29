@@ -11,6 +11,7 @@ Two tiers:
 
 import bisect
 import glob
+import warnings
 
 import numpy as np
 import pytest
@@ -349,3 +350,145 @@ def test_get_curvature_from_output_docstring_marks_deliberate_deviation():
 def test_frame_warp_cache_dead_code_removed():
     import model_replay_sim.infer as infer
     assert not hasattr(infer, "FrameWarpCache"), "dead FrameWarpCache should be deleted"
+
+
+# --------------------------------------------------------------------------- #
+# OPM7 3-model split: on_policy IS the policy; off_policy NOT loaded            #
+# --------------------------------------------------------------------------- #
+
+def _opm7_onnx():
+    d = C.RESULTS_ROOT / "onnx" / "OPM7"
+    return (d / "driving_vision.onnx").exists() and (d / "driving_on_policy.onnx").exists()
+
+
+def _7f_frames():
+    return bool(glob.glob("explorer_st_logs/route_7f/0000007f--*--*/fcamera.hevc"))
+
+
+def _7f_npz():
+    return (C.CACHE_ROOT / "route_7f.npz").exists()
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not _opm7_onnx(), reason="OPM7 vision/on_policy onnx not present locally")
+def test_opm7_loads_vision_and_on_policy_as_the_policy():
+    """The OPM7 split BundleModel loads vision + on_policy (NOT off_policy) as the policy.
+
+    Compiles on_policy (slow-ish first time) — marked slow. Asserts:
+      * vision inputs are {img, big_img};
+      * the policy metadata has `plan` in output_slices (plan-based curvature branch) and
+        NOT `desired_curvature`;
+      * the policy is on_policy and NOT off_policy: on_policy's output_slices carry
+        `desire_state` (an on_policy/CD210-policy output) and DO NOT carry `lane_lines`
+        (which is exclusive to off_policy). off_policy is never loaded.
+    """
+    from model_replay_sim.infer import BundleModel
+
+    model = BundleModel.get("OPM7")
+    assert model.split is True
+    # vision img inputs
+    assert set(model.vision_input_names) == {"img", "big_img"}
+    assert model.input_shapes["img"] == (1, 12, 128, 256)
+    assert model.input_shapes["big_img"] == (1, 12, 128, 256)
+    # on_policy input shapes (identical to CD210's policy) drive the temporal machinery
+    assert model.input_shapes["features_buffer"] == (1, 25, 512)
+    assert model.input_shapes["desire_pulse"] == (1, 25, 8)
+    assert model.input_shapes["traffic_convention"] == (1, 2)
+
+    pol = model.policy.output_slices
+    # plan-based curvature branch (no direct curvature output)
+    assert "plan" in pol
+    assert "desired_curvature" not in pol
+    # the policy IS on_policy: on_policy emits desire_state; it does NOT emit lane_lines
+    # (lane_lines is exclusive to off_policy). This proves off_policy was not loaded here.
+    assert "desire_state" in pol
+    assert "lane_lines" not in pol, "policy looks like off_policy (has lane_lines)"
+    # off_policy attribute is intentionally absent — we never load it
+    assert not hasattr(model, "off_policy")
+
+
+def _7f_short_window(route_id="route_7f", n_frames=20):
+    """A short contiguous eligible+aligned window of route_7f mono_times (same eligibility
+    rule as assets.py / the CD210 helper). Returns None if none found."""
+    from model_replay_sim.assets import _replay_scene_eligible_mask
+    from model_replay_sim.alignment import build_frame_timeline
+
+    z = dict(np.load(C.CACHE_ROOT / f"{route_id}.npz"))
+    mono = np.asarray(z["mono_time"], float)
+    elig = _replay_scene_eligible_mask(z)
+    tl = build_frame_timeline(route_id)
+    if not tl:
+        return None
+    eofs = sorted(r.timestamp_eof_s for r in tl)
+
+    def covered(t):
+        i = bisect.bisect_left(eofs, t)
+        return any(0 <= j < len(eofs) and abs(eofs[j] - t) <= C.MAX_FRAME_DELTA_S for j in (i - 1, i))
+
+    good = elig & np.array([covered(float(t)) for t in mono], dtype=bool)
+    i, n = 0, len(good)
+    best = None
+    while i < n:
+        if good[i]:
+            j = i
+            while j < n and good[j]:
+                j += 1
+            if (j - i) >= n_frames and (best is None or (j - i) > best[2]):
+                best = (i, j, j - i)
+            i = j
+        else:
+            i += 1
+    if best is None:
+        return None
+    s = best[0] + (best[2] - n_frames) // 2
+    return mono[s:s + n_frames]
+
+
+_OPM7_SKIP = not (_7f_frames() and _7f_npz() and _opm7_onnx())
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(_OPM7_SKIP, reason="route_7f frames/npz or OPM7 onnx not present locally")
+def test_replay_window_opm7_route_7f_end_to_end():
+    """Full vision -> on_policy -> curvature path on a short route_7f window: finite, right
+    length, plausible magnitude, deterministic. The unvalidated cross-model warning MUST fire
+    for OPM7 (no anchor yet)."""
+    from model_replay_sim.infer import replay_window, BundleModel
+
+    win = _7f_short_window("route_7f", n_frames=20)
+    if win is None:
+        pytest.skip("no eligible aligned window in route_7f")
+    assert len(win) == 20
+
+    model = BundleModel.get("OPM7")
+    assert set(model.vision_input_names) == {"img", "big_img"}
+
+    # the unvalidated warning must fire for OPM7 (anchor_validated=False)
+    with pytest.warns(UserWarning, match="NOT fidelity-anchor-validated"):
+        r = replay_window("OPM7", "route_7f", win)
+    curv = np.asarray(r["desired_curvature"], dtype=float)
+
+    # right length
+    assert curv.shape == (len(win),)
+    # finite where v_ego is valid; nan only where v_ego is honestly nan (excluded by metrics)
+    v = np.asarray(r["v_ego"], dtype=float)
+    finite_mask = np.isfinite(v)
+    assert finite_mask.any(), "expected at least some valid-speed frames in the window"
+    assert np.all(np.isfinite(curv[finite_mask])), "curvature must be finite where v_ego valid"
+    # plausible magnitude on a gentle (eligible) window
+    assert np.max(np.abs(curv[finite_mask])) < 0.05, \
+        f"curv too large: max|c|={np.max(np.abs(curv[finite_mask])):.4f}"
+
+    # plan-based curvature branch (on_policy emits no desired_curvature)
+    assert "desired_curvature" not in model.policy.output_slices
+
+    # mono_time / v_ego / frames aligned
+    np.testing.assert_allclose(r["mono_time"], np.asarray(win, float))
+    assert len(r["v_ego"]) == len(win)
+    assert len(r["frames"]) == len(win)
+
+    # deterministic across two runs (bit-identical); suppress the (re-)warning
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        r2 = replay_window("OPM7", "route_7f", win)
+    np.testing.assert_array_equal(curv, np.asarray(r2["desired_curvature"], dtype=float))
