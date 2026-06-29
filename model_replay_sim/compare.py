@@ -53,12 +53,17 @@ def _pairwise_ratios(weave: dict) -> dict:
 
 
 def compare_on_scene(scene_route: str, bundles, warmup_s: float = 10.0,
-                     min_compare_s: float = 30.0) -> dict:
+                     min_compare_s: float = 30.0, max_compare_frames: int | None = None) -> dict:
     """Replay every bundle on ONE shared anchor window of ``scene_route`` and compare weave.
 
     Every model replays the EXACT same ``span.mono_times`` (identical frames + calibration),
     so any weave difference is purely the model, not the scene. The weave is the band-RMS of
     each model's post-warm-up ``desired_curvature`` (``curv[span.split_index:]``).
+
+    ``max_compare_frames`` caps the compare window (``select_anchor_span`` uses the WHOLE
+    contiguous eligible run, which can be thousands of frames — e.g. route_7f ~6945 → ~47min
+    of replay PER model). 1200 frames (~60s) matches the validated CD210-anchor scale and is
+    ample for the 0.10-0.35Hz weave band. ``None`` = no cap (whole run).
 
     Returns::
 
@@ -76,11 +81,16 @@ def compare_on_scene(scene_route: str, bundles, warmup_s: float = 10.0,
     span = select_anchor_span(scene_route, warmup_s, min_compare_s)  # ONE shared window
     split = int(span.split_index)
 
+    mono = np.asarray(span.mono_times)
+    if max_compare_frames is not None:
+        mono = mono[: min(len(mono), split + int(max_compare_frames))]  # cap the compare tail
+    n_compare = int(len(mono) - split)
+
     per_bundle: dict[str, dict] = {}
     weave: dict[str, float] = {}
     unvalidated: list[str] = []
     for b in bundles:
-        r = replay_window(b, scene_route, span.mono_times)
+        r = replay_window(b, scene_route, mono)
         curv = np.asarray(r["desired_curvature"], dtype=float)[split:]  # post-warm-up only
         w = weave_band_rms(curv)
         validated = _anchor_validated(b)
@@ -96,7 +106,7 @@ def compare_on_scene(scene_route: str, bundles, warmup_s: float = 10.0,
 
     return {
         "scene_route": scene_route,
-        "n_compare": int(span.compare_frames),
+        "n_compare": n_compare,
         "split_index": split,
         "per_bundle": per_bundle,
         "ratios": _pairwise_ratios(weave),
@@ -119,7 +129,7 @@ def _median_ratios(per_scene: dict) -> dict:
 
 
 def compare_models(scenes, bundles, warmup_s: float = 10.0,
-                   min_compare_s: float = 30.0) -> dict:
+                   min_compare_s: float = 30.0, max_compare_frames: int | None = None) -> dict:
     """Run :func:`compare_on_scene` for each scene and aggregate across scenes.
 
     Reports per-scene results, the per-bundle weave per scene, and the MEDIAN pairwise ratio
@@ -142,7 +152,8 @@ def compare_models(scenes, bundles, warmup_s: float = 10.0,
     per_scene: dict[str, dict] = {}
     for sc in scenes:
         per_scene[sc] = compare_on_scene(sc, bundles, warmup_s=warmup_s,
-                                         min_compare_s=min_compare_s)
+                                         min_compare_s=min_compare_s,
+                                         max_compare_frames=max_compare_frames)
 
     per_bundle_weave: dict[str, dict] = {b: {} for b in bundles}
     for sc, res in per_scene.items():

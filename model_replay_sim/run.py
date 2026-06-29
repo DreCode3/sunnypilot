@@ -225,7 +225,9 @@ def _run_compare(args) -> int:
 
     print(f"[compare] replaying {bundles} on shared scenes {scenes} "
           f"(warmup>={args.warmup_s}s, compare>={args.compare_s}s)...", flush=True)
-    res = compare_models(scenes, bundles, warmup_s=args.warmup_s, min_compare_s=args.compare_s)
+    cap = args.max_compare_frames if args.max_compare_frames and args.max_compare_frames > 0 else None
+    res = compare_models(scenes, bundles, warmup_s=args.warmup_s, min_compare_s=args.compare_s,
+                         max_compare_frames=cap)
     res["tinygrad_repo_sha_now"] = _tinygrad_repo_sha()
     _print_compare(res)
 
@@ -293,6 +295,10 @@ def main(argv=None) -> int:
     # shared
     ap.add_argument("--warmup-s", type=float, default=10.0)
     ap.add_argument("--compare-s", type=float, default=30.0)
+    ap.add_argument("--max-compare-frames", type=int, default=1200,
+                    help="[compare] cap the compare window (select_anchor_span uses the whole "
+                         "contiguous eligible run, e.g. route_7f ~6945 frames => ~47min/model). "
+                         "1200 (~60s) matches the CD210-anchor scale. 0 = no cap.")
     args = ap.parse_args(argv)
 
     if args.compare:
