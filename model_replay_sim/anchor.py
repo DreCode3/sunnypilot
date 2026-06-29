@@ -183,25 +183,31 @@ def select_anchor_span(route_id: str = "route_b5", warmup_s: float = 10.0,
 # The real anchor run (heavy: replays CD210 vision+policy)                     #
 # --------------------------------------------------------------------------- #
 
-def run_cd210_anchor(route_id: str = "route_b5", warmup_s: float = 10.0,
-                     min_compare_s: float = 30.0) -> dict:
-    """Run the CD210 same-model fidelity anchor end-to-end and return the verdict + numbers.
+def run_anchor(bundle: str, route_id: str = "route_b5", warmup_s: float = 10.0,
+               min_compare_s: float = 30.0) -> dict:
+    """Run a same-model fidelity anchor end-to-end for ANY bundle and return verdict + numbers.
+
+    Generic over the bundle: replays ``bundle`` on a window of ``route_id`` where ``bundle``'s
+    model actually drove and checks the replayed ``action.desiredCurvature`` reproduces the
+    LOGGED ``modelV2.action.desiredCurvature`` on those frames. (For a non-anchor-validated
+    bundle this is only meaningful if the route_id is one the bundle actually drove — the
+    caller is responsible for that pairing; CD210/route_b5 is the validated pair.)
 
     Steps:
       1. select_anchor_span -> contiguous [warm-up + comparison] span (real frame_ids)
-      2. replay_window("CD210", route, span.mono_times) -> replayed desiredCurvature
+      2. replay_window(bundle, route, span.mono_times) -> replayed desiredCurvature
       3. split off the warm-up; verify the returned frame alignment matches the selected rows
       4. logged_action_curvature(route, comparison frame_ids) -> logged ground truth
       5. anchor_metrics(replayed_compare, logged_compare) + anchor_verdict -> gate
 
-    Returns a flat dict with passed/corr/band_ratio/band_rms_*/counts/provenance.
+    Returns a flat dict with passed/corr/band_ratio/band_rms_*/counts/provenance + ``bundle``.
     """
     from model_replay_sim.infer import replay_window
     from model_replay_sim.parse import logged_action_curvature
 
     span = select_anchor_span(route_id, warmup_s=warmup_s, min_compare_s=min_compare_s)
 
-    r = replay_window("CD210", route_id, span.mono_times)
+    r = replay_window(bundle, route_id, span.mono_times)
     replayed = np.asarray(r["desired_curvature"], dtype=float)
     if replayed.shape[0] != span.mono_times.shape[0]:
         raise RuntimeError(
@@ -229,14 +235,14 @@ def run_cd210_anchor(route_id: str = "route_b5", warmup_s: float = 10.0,
     # diagnostics (cheap, always computed): small-lag correlation to detect a residual shift
     lag_corr = _lag_offset_corr(replayed_compare, logged_compare, lags=(-2, -1, 0, 1, 2))
 
-    prov = _provenance()
+    prov = _provenance(bundle)
     n_logged_valid = int(np.isfinite(logged_compare).sum())
     n_replayed_valid = int(np.isfinite(replayed_compare).sum())
 
     return {
         "passed": bool(passed),
         "route_id": route_id,
-        "bundle": "CD210",
+        "bundle": bundle,
         "corr": metrics["corr"],
         "band_ratio": metrics["band_ratio"],
         "band_rms_replayed": metrics["band_rms_replayed"],
@@ -261,6 +267,13 @@ def run_cd210_anchor(route_id: str = "route_b5", warmup_s: float = 10.0,
         "_replayed_compare": replayed_compare,
         "_logged_compare": logged_compare,
     }
+
+
+def run_cd210_anchor(route_id: str = "route_b5", warmup_s: float = 10.0,
+                     min_compare_s: float = 30.0) -> dict:
+    """The CD210 same-model fidelity anchor — a thin wrapper over the generic
+    :func:`run_anchor` pinned to the anchor-validated (CD210, route_b5) pair."""
+    return run_anchor("CD210", route_id, warmup_s=warmup_s, min_compare_s=min_compare_s)
 
 
 def anchor_metrics_safe(replayed, logged) -> dict:
@@ -292,11 +305,11 @@ def _lag_offset_corr(replayed, logged, lags=(-2, -1, 0, 1, 2)) -> dict:
     return out
 
 
-def _provenance() -> dict:
+def _provenance(bundle: str = "CD210") -> dict:
     """tinygrad sha + onnx sha256 from Task 5 provenance.json + the gate thresholds."""
     import json
-    p = {"tinygrad_sha": None, "models": [], "bundle_full_sha": C.BUNDLES["CD210"]["full_sha"]}
-    prov_path = C.RESULTS_ROOT / "onnx" / "CD210" / "provenance.json"
+    p = {"tinygrad_sha": None, "models": [], "bundle_full_sha": C.BUNDLES[bundle]["full_sha"]}
+    prov_path = C.RESULTS_ROOT / "onnx" / bundle / "provenance.json"
     if prov_path.exists():
         try:
             j = json.loads(prov_path.read_text())
