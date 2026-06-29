@@ -33,6 +33,7 @@ the first tinygrad import); :func:`model_replay_sim.warp._ensure_tinygrad_env` a
 from __future__ import annotations
 
 import pickle
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -424,32 +425,35 @@ def replay_window(bundle: str, route_id: str, mono_times) -> dict:
     v_egos = _route_window_v_ego(route_id, mono_times)
 
     curvs = np.empty(len(mono_times), dtype=np.float64)
-    prev_sixchan = None
-    # big_img path: CD210's far-field path/curvature prediction leans on the REAL WIDE camera
-    # (ecamera.hevc), so we feed the actual wide frame warped through M_extra. When the wide
-    # frame is missing/short for a given road frame (al.ecamera_index is None), we carry
-    # forward the previous wide sixchan; on the very first frame with no history we fall back
-    # once to the road-through-M_extra proxy. The road `img` path is untouched.
-    prev_sixchan_big = None
+    # The device 20Hz vision warp keeps a rolling buffer of `buf_len` frames and feeds the
+    # model cat(buffer[:6], buffer[-6:]) = the OLDEST+NEWEST frame (compile_warp.py:101;
+    # buffer_length = 5 if is_20hz else 2, modeld.py:75). So the two img channels are frames
+    # t-(buf_len-1) and t. Pairing only (t-1, t) gives ~1/4 the inter-frame motion -> the model
+    # under-estimates orientation-rate and the replayed weave came out ~2x too small. Threading
+    # a buf_len-deep ring buffer and pairing (oldest, newest) restores it (sep-sweep on the
+    # CD210 anchor: sep=buf_len-1=4 -> band_ratio 1.008, corr 0.993). Same for the wide cam.
+    buf_len = int(C.BUNDLES[bundle].get("img_buffer_length", 5))
+    road_buf: deque = deque(maxlen=buf_len)
+    wide_buf: deque = deque(maxlen=buf_len)
     for i, (al, t, v) in enumerate(zip(aligns, mono_times, v_egos)):
-        nv12 = read_frame(route_id, al.segment_num, al.segment_id)
-        nv12 = np.asarray(nv12, dtype=np.uint8).ravel()
+        nv12 = np.asarray(read_frame(route_id, al.segment_num, al.segment_id), dtype=np.uint8).ravel()
         cam_w, cam_h = _frame_dims(nv12.size)
-        cur = frame_to_sixchan(nv12, cam_w, cam_h, M_main)          # (6,128,256)
-        img = _pair(prev_sixchan if prev_sixchan is not None else cur, cur)
-        prev_sixchan = cur
+        road_buf.append(frame_to_sixchan(nv12, cam_w, cam_h, M_main))   # (6,128,256)
+        img = _pair(road_buf[0], road_buf[-1])                          # (oldest=t-(buf_len-1), newest=t)
 
+        # wide (big_img): use the REAL wide frame (ecamera.hevc) warped through M_extra; when it
+        # is missing/short (al.ecamera_index is None) carry forward the last wide sixchan, and on
+        # the very first frame with no history fall back once to the road-through-M_extra proxy.
         if al.ecamera_index is not None:
-            wide_nv12 = read_wide_frame(route_id, al.segment_num, al.ecamera_index)
-            wide_nv12 = np.asarray(wide_nv12, dtype=np.uint8).ravel()
+            wide_nv12 = np.asarray(read_wide_frame(route_id, al.segment_num, al.ecamera_index), dtype=np.uint8).ravel()
             w_w, w_h = _frame_dims(wide_nv12.size)
             cur_big = frame_to_sixchan(wide_nv12, w_w, w_h, M_extra)
-        elif prev_sixchan_big is not None:
-            cur_big = prev_sixchan_big                              # carry forward last wide
+        elif wide_buf:
+            cur_big = wide_buf[-1]                                      # carry forward last wide
         else:
-            cur_big = frame_to_sixchan(nv12, cam_w, cam_h, M_extra)  # one-time proxy fallback
-        big_img = _pair(prev_sixchan_big if prev_sixchan_big is not None else cur_big, cur_big)
-        prev_sixchan_big = cur_big
+            cur_big = frame_to_sixchan(nv12, cam_w, cam_h, M_extra)     # one-time proxy fallback
+        wide_buf.append(cur_big)
+        big_img = _pair(wide_buf[0], wide_buf[-1])
 
         curvs[i] = state.step({"img": img, "big_img": big_img}, float(v))
 
