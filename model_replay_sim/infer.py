@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import pickle
 from collections import deque
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -53,11 +52,15 @@ MIN_SPEED = 1.0  # drive_helpers.MIN_SPEED
 #
 # We do NOT import these from the production modules because their import chains pull in
 # Cython/native extensions not built in this analysis venv (fill_model_msg -> models.helpers
-# -> common.params_pyx; drive_helpers -> common.realtime -> setproctitle). These four
-# functions are pure numpy and copied VERBATIM (only the import-time DT_MDL default is
-# substituted by the module constant above). Citations:
-#   smooth_value, curv_from_psis, get_curvature_from_plan -> drive_helpers.py:21-63
-#   get_curvature_from_output                              -> fill_model_msg.py:14-20
+# -> common.params_pyx; drive_helpers -> common.realtime -> setproctitle). These functions
+# are pure numpy. smooth_value/curv_from_psis/get_curvature_from_plan are copied VERBATIM
+# (only the import-time DT_MDL default is substituted by the module constant above);
+# get_curvature_from_output deliberately deviates (see its docstring). Citations
+# (repo-relative paths):
+#   smooth_value, curv_from_psis, get_curvature_from_plan
+#       -> selfdrive/controls/lib/drive_helpers.py:21-63
+#   get_curvature_from_output
+#       -> sunnypilot/modeld_v2/fill_model_msg.py:14-20
 # ---------------------------------------------------------------------------
 
 def smooth_value(val, prev_val, tau, dt=DT_MDL):
@@ -81,7 +84,18 @@ def _get_curvature_from_plan(yaws, yaw_rates, t_idxs, vego, action_t):
 
 
 def get_curvature_from_output(output, plan, vego, lat_action_t, mlsim, t_idxs, plan_enum):
-    # fill_model_msg.py:14-20 (verbatim; t_idxs/plan_enum passed in to avoid the heavy import)
+    """Adapted from ``sunnypilot/modeld_v2/fill_model_msg.py:14-20`` (t_idxs/plan_enum passed
+    in to avoid the heavy production import).
+
+    DELIBERATE DEVIATION FROM PRODUCTION: production tests presence with numpy-array
+    truthiness — ``if desired_curv := output.get('desired_curvature'):`` — which raises on a
+    multi-element array and, more importantly, treats an all-zeros ``[[0.0]]`` curvature
+    output as ABSENT (falls through to the plan path) on its 0.0-array truthiness edge case.
+    We use the more-correct ``is not None``: an emitted desired_curvature is used iff the key
+    exists, regardless of its value. This matters only for a bundle that BOTH emits
+    desired_curvature AND is non-mlsim; CD210 (the anchor) emits none, so both behaviors agree
+    and the anchor is unaffected.
+    """
     if not mlsim:
         if (desired_curv := output.get('desired_curvature')) is not None:  # model emits curv directly
             return float(desired_curv[0, 0])
@@ -286,8 +300,13 @@ class ReplayState:
         # through to the plan-based path regardless of mlsim (fill_model_msg.py:14-20).
         # We assert that here so we know we are on the faithful plan path.
         self._has_desired_curv_output = "desired_curvature" in model.policy.output_slices
-        # generation>=11 => mlsim; CD210's generation is >=11 but it is a no-op for curvature
-        # because the policy emits no desired_curvature. We pass mlsim=True for CD210.
+        # mlsim: the REAL device rule is `generation >= 11` (a download-MANIFEST field, NOT
+        # present in the pinned bundle/onnx). We cannot read it here, so we use a PROXY:
+        #   mlsim = not has_desired_curvature_output
+        # This proxy is correct-and-VALIDATED for CD210 (generation >= 11 AND the policy emits
+        # no desired_curvature -> both rules agree: take the plan path) — but it is UNVERIFIED
+        # for any other bundle, where the manifest generation could disagree with output-key
+        # presence. Hence non-CD210 bundles warn (see replay_window / _warn_if_unvalidated).
         self.mlsim = not self._has_desired_curv_output  # True for CD210 (no desired_curvature)
 
         # --- temporal buffer construction (modeld.py:78-104) via the pure helper ----------
@@ -324,7 +343,9 @@ class ReplayState:
         """Run ONE frame end-to-end and return the smoothed desiredCurvature.
 
         ``frame_inputs`` must carry the vision input tensors {'img','big_img'} (uint8
-        (1,12,128,256) from Task 7's frame_to_model_input). v_ego in m/s.
+        (1,12,128,256)); replay_window builds them by pairing the oldest+newest sixchan of a
+        ring buffer (see :func:`replay_window`). v_ego in m/s; a non-finite v_ego -> nan
+        return (the frame is then excluded by the nan-aware metrics).
         """
         # desire roll (passive replay -> all zeros)
         vec_desire = np.zeros(self.DESIRE_LEN, dtype=np.float32)
@@ -354,6 +375,12 @@ class ReplayState:
 
         # --- curvature post-step (modeld.py:163-178; fill_model_msg.get_curvature_from_output) ---
         plan = policy_out["plan"]            # (1, IDX_N, PLAN_WIDTH)
+        # A nan v_ego is our HONEST "no valid speed" signal (_route_window_v_ego). The device
+        # never sees nan v_ego, so the production smoothing branch (v_ego > thresh) does not
+        # define behavior for it; emit nan (curvature scaling 1/vego is undefined) so the frame
+        # is dropped by the nan-aware metrics rather than silently holding prev_curvature.
+        if not np.isfinite(v_ego):
+            return float("nan")
         curv = get_curvature_from_output(policy_out, plan[0], float(v_ego), self.lat_action_t,
                                          self.mlsim, self.T_IDXS, self.Plan)
         # generation>=10 smoothing (modeld.py:172-176): smooth above MIN_LAT_CONTROL_SPEED,
@@ -371,39 +398,80 @@ class ReplayState:
 # Window replay
 # ---------------------------------------------------------------------------
 
-@dataclass
-class FrameWarpCache:
-    """Per-route warp transform + per-segment FrameReader reuse, so a window doesn't
-    reopen the HEVC for every frame."""
-    route_id: str
-    cam_w: int
-    cam_h: int
-    transform_main: np.ndarray
-    transform_extra: np.ndarray
+def _warn_if_unvalidated(bundle: str) -> None:
+    """Emit ONE loud warning when ``bundle`` has no same-model fidelity anchor.
+
+    Only CD210 is anchor-validated (config.BUNDLES). Cross-model replays (Nevada/OPM7)
+    can return silently-wrong weave numbers: img_buffer_length assumes is_20hz and mlsim is
+    derived from output-key presence rather than the device's generation>=11 rule — neither
+    is proven for those bundles. Pure (no model load) so it can be unit-tested cheaply and
+    fires before any heavy compute in replay_window."""
+    if not C.BUNDLES.get(bundle, {}).get("anchor_validated", False):
+        import warnings
+        buf_len = int(C.BUNDLES.get(bundle, {}).get("img_buffer_length", 5))
+        warnings.warn(
+            f"{bundle}: cross-model replay is NOT fidelity-anchor-validated "
+            f"(img_buffer_length={buf_len} assumes is_20hz, and mlsim is derived from "
+            f"output-key presence, not the device's generation>=11 rule); the weave number "
+            f"may be systematically wrong. Validate with a same-model anchor before trusting it.",
+            stacklevel=2)
 
 
 def _route_window_v_ego(route_id: str, mono_times) -> np.ndarray:
     """v_ego (m/s) for each window mono_time, nearest-sample from the cached route npz
-    (the same source assets.py uses). Falls back to 0 where unavailable."""
+    (the same source assets.py uses).
+
+    HONESTY GUARDS (a silent v_ego=0 corrupts curvature scaling: curv ~ 1/vego, and v_ego=0
+    clips to MIN_SPEED=1.0 -> the primary output is silently scaled wrong):
+      (a) A frame whose nearest sample is non-finite, OR is farther than ``C.MAX_FRAME_DELTA_S``
+          from the request time, emits ``np.nan`` (NOT 0.0). nan v_ego -> nan curvature ->
+          the frame is honestly excluded by the nan-aware metrics (parse.py's nan-in-place
+          discipline), instead of corrupting the weave number.
+      (b) A missing route NPZ, or one lacking ``v_ego``/``mono_time``, raises (no zero array).
+      (c) If >25% of the requested frames resolve to nan, warn loudly (route + nan fraction).
+    """
+    mono_times = [float(m) for m in mono_times]
     npz = C.CACHE_ROOT / f"{route_id}.npz"
     if not npz.exists():
-        return np.zeros(len(list(mono_times)), dtype=np.float32)
+        raise FileNotFoundError(f"route NPZ not found for v_ego lookup: {npz}")
     z = dict(np.load(npz))
+    if "mono_time" not in z or "v_ego" not in z:
+        raise KeyError(
+            f"route NPZ {npz} is missing required key(s) for v_ego lookup "
+            f"(need 'mono_time' and 'v_ego'; have {sorted(z)[:8]}...)")
     t = np.asarray(z["mono_time"], float)
-    v = np.asarray(z.get("v_ego", np.zeros_like(t)), float)
+    v = np.asarray(z["v_ego"], float)
     out = []
     for m in mono_times:
-        i = int(np.argmin(np.abs(t - float(m))))
-        out.append(float(v[i]) if np.isfinite(v[i]) else 0.0)
-    return np.asarray(out, dtype=np.float32)
+        i = int(np.argmin(np.abs(t - m)))
+        if (not np.isfinite(v[i])) or abs(float(t[i]) - m) > C.MAX_FRAME_DELTA_S:
+            out.append(np.nan)        # honest nan: excluded by nan-aware metrics, never a fake 0
+        else:
+            out.append(float(v[i]))
+    arr = np.asarray(out, dtype=np.float32)
+    if arr.size:
+        nan_frac = float(np.mean(~np.isfinite(arr)))
+        if nan_frac > 0.25:
+            import warnings
+            warnings.warn(
+                f"{route_id}: {nan_frac:.0%} of requested frames have no valid v_ego "
+                f"(non-finite or > {C.MAX_FRAME_DELTA_S}s from nearest NPZ sample); those "
+                f"frames yield nan curvature and are excluded from the weave metric.",
+                stacklevel=2)
+    return arr
 
 
 def replay_window(bundle: str, route_id: str, mono_times) -> dict:
     """Replay a window of ``mono_times`` through ``bundle`` on ``route_id`` and return the
     desiredCurvature series.
 
-    Pipeline per frame: map_window_to_frames (Task 3) -> read_frame -> frame_to_model_input
-    (Task 7, threading prev_sixchan forward as recurrent pixel state) -> ReplayState.step.
+    Pipeline per frame: map_window_to_frames (Task 3) -> read_frame/read_wide_frame ->
+    frame_to_sixchan (warp + sixchan-pack) into a ``buf_len``-deep ring buffer (one for the
+    road cam, one for the wide cam) -> ``_pair(buffer[0], buffer[-1])`` = the OLDEST+NEWEST
+    sixchan (the device's cat(buffer[:6], buffer[-6:]) 12-channel input) -> ReplayState.step.
+    NOTE: this is the production replay path; it does NOT route through
+    ``warp.frame_to_model_input`` (that helper pairs only a single (prev, current) and is used
+    by tests) — it threads a ring buffer so the two img channels span ``buf_len`` frames.
 
     Returns ``{"route_id","bundle","mono_time": (N,), "desired_curvature": (N,),
     "v_ego": (N,), "frames": [(seg_num,seg_id),...]}``.
@@ -411,6 +479,8 @@ def replay_window(bundle: str, route_id: str, mono_times) -> dict:
     from model_replay_sim.alignment import map_window_to_frames, read_frame, read_wide_frame
     from model_replay_sim.context import route_context
     from model_replay_sim.warp import model_transform, frame_to_sixchan
+
+    _warn_if_unvalidated(bundle)  # loud guard for cross-model (non-anchor) bundles, before heavy compute
 
     mono_times = [float(t) for t in mono_times]
     ctx = route_context(route_id)

@@ -210,6 +210,11 @@ def frame_to_model_input(nv12_flat: np.ndarray, cam_w: int, cam_h: int,
                          prev_sixchan: np.ndarray | None = None) -> np.ndarray:
     """Build the vision model input tensor ``(1, 12, 128, 256)`` uint8 for ONE frame.
 
+    NOTE: this single-pair (prev, current) helper is a test/convenience function. The
+    production replay path (``model_replay_sim.infer.replay_window``) does NOT call it; it
+    threads a ``buf_len``-deep ring buffer of sixchans and pairs the oldest+newest, so the two
+    img channels span ``buf_len`` frames (anchor-validated) rather than just (t-1, t).
+
     Channels 0:6 = the previous frame's sixchan, 6:12 = the current frame's sixchan —
     matching production ``make_update_img_input``: the rolling buffer is rotated by 6 and
     the model input is ``cat(buffer[:6], buffer[-6:])`` = (oldest 6, newest 6). For a
