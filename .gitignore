@@ -95,3 +95,42 @@ SKILL.md
 !.idea/customTargets.xml
 !.idea/tools/*
 !.run/*
+
+# === Explorer ST project cleanup (2026-06-14): venvs, drive data, caches, artifacts ===
+# Python virtual environments (named variants the base .venv/ pattern misses)
+.venv*/
+venv*/
+# byte-compiled / numpy caches
+__pycache__/
+*.npz
+*.npy
+# raw drive logs (large; pulled from device — regenerable while the device retains the routes)
+rlog
+rlog_*
+qlog*
+*.qlog
+# drive-data directories (rlog segment stores, NOT source) + scratch
+explorer_st_logs/route_*/
+explorer_st_logs/0000*/
+explorer_st_logs/_*/
+explorer_st_logs/analysis/
+G70 logs/
+cleanroom_lateral_analysis/drives/
+# per-analysis extracted-signal caches (regenerable by the extractors)
+**/cache/
+**/results/cache/
+# stray build/test artifacts + editor workspace
+*.err
+*.code-workspace
+# derived per-route analysis dumps (regenerable by the analysis scripts) + run logs
+explorer_st_logs/*results*.txt
+explorer_st_logs/*.log
+# PRIVATE — clean-room de-blinding key; must never be committed/shared
+explorer_st_logs/CLEANROOM_DEBLINDING_KEY.md
+explorer_st_logs/CLEANROOM_HANDOFF_PROMPT.md
+# analysis figures: *.png is LFS-tracked but the LFS endpoint (gitlab) is unreachable from forks —
+# these plots are regenerable, so keep them out of git rather than create dangling LFS pointers
+cleanroom_lateral_analysis/analysis/figures/
+**/analysis/figures/*.png
+longitudinal_weave/**/*.png
+learned_param_studies/**/*.png

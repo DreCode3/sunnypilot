@@ -1,0 +1,25 @@
+# Python dependencies for the Explorer ST ANALYSIS tooling
+#   (explorer_st_logs/, learned_param_studies/, longitudinal_weave/, controlled_test_analysis/)
+#
+# Separate from the main openpilot app build (pyproject.toml, Python 3.12) — the analysis runs in a Python 3.11 venv.
+# The scripts also import openpilot.tools.lib.logreader FROM THIS REPO (run from the repo root / repo root on
+# PYTHONPATH), which is why the rlog reader's deps (pycapnp + zstandard) are included here.
+#
+# Setup:
+#   python3.11 -m venv .venv311
+#   .venv311/bin/pip install -r requirements-analysis.txt
+#
+# Pinned to the versions the analysis was developed + verified against (2026-06).
+numpy==2.4.2
+scipy==1.17.1
+pandas==3.0.3
+# openpilot rlog reader: cereal/capnp messages + zstd-compressed logs
+pycapnp==2.1.0
+zstandard==0.25.0
+requests==2.32.5
+tqdm==4.67.3
+pytest==9.0.2
+# model_replay_sim: ONNX model load/inference + parquet artifact IO
+onnx==1.22.0
+onnxruntime==1.27.0
+pyarrow==24.0.0

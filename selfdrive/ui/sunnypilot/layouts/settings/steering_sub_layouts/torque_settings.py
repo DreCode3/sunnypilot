@@ -62,7 +62,7 @@ class TorqueSettingsLayout(Widget):
       param="CustomTorqueParams",
       title=lambda: tr("Enable Custom Tuning"),
       description=lambda: tr("Enables custom tuning for Torque lateral control. " +
-                             "Modifying Lateral Acceleration Factor and Friction below will override the offline values " +
+                             "Modifying Lateral Acceleration Factor, Lateral Acceleration Offset, and Friction below will override the offline values " +
                              "indicated in the YAML files within \"opendbc/car/torque_data\". " +
                              "The values will also be used live when \"Manual Real-Time Tuning\" toggle is enabled."),
     )
@@ -78,6 +78,17 @@ class TorqueSettingsLayout(Widget):
       description="",
       min_value=1,
       max_value=500,
+      value_change_step=1,
+      label_callback=(lambda x: f"{x/100} m/s^2"),
+      use_float_scaling=True
+    )
+
+    self._torque_lat_accel_offset = option_item_sp(
+      title=lambda: tr("Lateral Acceleration Offset"),
+      param="TorqueParamsOverrideLatAccelOffset",
+      description="",
+      min_value=-100,
+      max_value=100,
       value_change_step=1,
       label_callback=(lambda x: f"{x/100} m/s^2"),
       use_float_scaling=True
@@ -101,6 +112,7 @@ class TorqueSettingsLayout(Widget):
       self._custom_tune_toggle,
       self._torque_prams_override_toggle,
       self._torque_lat_accel_factor,
+      self._torque_lat_accel_offset,
       self._torque_friction,
     ]
     return items
@@ -116,15 +128,18 @@ class TorqueSettingsLayout(Widget):
     custom_tune_enabled = self._custom_tune_toggle.action_item.get_state()
     self._torque_prams_override_toggle.set_visible(custom_tune_enabled)
     self._torque_lat_accel_factor.set_visible(custom_tune_enabled)
+    self._torque_lat_accel_offset.set_visible(custom_tune_enabled)
     self._torque_friction.set_visible(custom_tune_enabled)
 
     self._torque_prams_override_toggle.action_item.set_enabled(ui_state.is_offroad())
     sliders_enabled = self._torque_prams_override_toggle.action_item.get_state() or ui_state.is_offroad()
     self._torque_lat_accel_factor.action_item.set_enabled(sliders_enabled)
+    self._torque_lat_accel_offset.action_item.set_enabled(sliders_enabled)
     self._torque_friction.action_item.set_enabled(sliders_enabled)
 
     title_text = tr("Real-Time & Offline") if ui_state.params.get("TorqueParamsOverrideEnabled") else tr("Offline Only")
     self._torque_lat_accel_factor.set_title(lambda: tr("Lateral Acceleration Factor") + " (" + title_text + ")")
+    self._torque_lat_accel_offset.set_title(lambda: tr("Lateral Acceleration Offset") + " (" + title_text + ")")
     self._torque_friction.set_title(lambda: tr("Friction") + " (" + title_text + ")")
     self._torque_control_versions.action_item.set_value(self._get_current_torque_version_label())
 

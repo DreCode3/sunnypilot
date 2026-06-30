@@ -38,6 +38,12 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"DoUninstall", {CLEAR_ON_MANAGER_START, BOOL}},
     {"DriverTooDistracted", {CLEAR_ON_MANAGER_START | CLEAR_ON_IGNITION_ON, BOOL}},
     {"AlphaLongitudinalEnabled", {PERSISTENT | DEVELOPMENT_ONLY | BACKUP, BOOL}},
+    {"enable_lane_positioning", {PERSISTENT, BOOL, "0"}},
+    {"FordCurveMode", {PERSISTENT, STRING, "0"}},
+    {"FordPath4Enabled", {PERSISTENT, BOOL, "0"}},
+    {"LaneBiasIntegral", {PERSISTENT, STRING, "0"}},
+    {"disable_BP_long_UI", {PERSISTENT, BOOL, "0"}},
+    {"disable_downhill_comp_UI", {PERSISTENT, BOOL, "1"}},
     {"ExperimentalMode", {PERSISTENT | BACKUP, BOOL}},
     {"ExperimentalModeConfirmed", {PERSISTENT | BACKUP, BOOL}},
     {"FirmwareQueryDone", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, BOOL}},
@@ -278,4 +284,5 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"TorqueParamsOverrideEnabled", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"TorqueParamsOverrideFriction", {PERSISTENT | BACKUP, FLOAT, "0.1"}},
     {"TorqueParamsOverrideLatAccelFactor", {PERSISTENT | BACKUP, FLOAT, "2.5"}},
+    {"TorqueParamsOverrideLatAccelOffset", {PERSISTENT | BACKUP, FLOAT, "0.0"}},
 };
