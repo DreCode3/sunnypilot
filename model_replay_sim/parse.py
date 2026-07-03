@@ -35,15 +35,19 @@ def _route_action_map(route_id: str) -> dict:
         if seg is None:
             continue
         dmd: dict[int, float] = {}
-        try:                                          # corrupt/truncated rlog → skip segment
-            for m in LogReader(str(seg / "rlog.zst")):
-                w = m.which()
-                if w == "modelV2":
-                    out[int(m.modelV2.frameId)] = float(m.modelV2.action.desiredCurvature)
-                elif w == "drivingModelData":
-                    dmd[int(m.drivingModelData.frameId)] = float(m.drivingModelData.action.desiredCurvature)
+        try:                                          # unopenable rlog → skip segment
+            lr = LogReader(str(seg / "rlog.zst"))
         except Exception:
             continue
+        for m in lr:                                  # a SINGLE corrupt event (.which() throws
+            try:                                      # on new-format rlogs) skips that message
+                w = m.which()                         # only, NOT the whole segment (same fix as
+                if w == "modelV2":                    # alignment.build_frame_timeline — the old
+                    out[int(m.modelV2.frameId)] = float(m.modelV2.action.desiredCurvature)
+                elif w == "drivingModelData":         # whole-loop try silently truncated the
+                    dmd[int(m.drivingModelData.frameId)] = float(m.drivingModelData.action.desiredCurvature)
+            except Exception:                         # anchor ground truth on stock rlogs)
+                continue
         for fid, c in dmd.items():                    # fallback only where modelV2 absent
             out.setdefault(fid, c)
     return out

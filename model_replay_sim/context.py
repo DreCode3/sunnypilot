@@ -96,9 +96,12 @@ def _decode_bool(raw: bytes | None, default: bool) -> bool:
 
 
 def _boot_rlog(route_id: str) -> str:
-    """Lowest-segment-number rlog for the route (the boot segment carries initData)."""
-    matches = glob.glob(f"explorer_st_logs/{route_id}/000000{route_id[len('route_'):]}--*--*/rlog.zst")
-    matches += glob.glob(str(C.LOG_ROOT / route_id / f"000000{route_id[len('route_'):]}--*--*" / "rlog.zst"))
+    """Lowest-segment-number rlog for the route (the boot segment carries initData).
+
+    Glob is generic over segment-dir names (same predicate as alignment._seg_dirs) —
+    the old f"000000{route_id[len('route_'):]}" form assumed the fork-era route_<2-hex>
+    dir convention and broke free-form route dirs (e.g. route_stock05)."""
+    matches = glob.glob(str(C.LOG_ROOT / route_id / "000000*--*--*" / "rlog.zst"))
     if not matches:
         raise FileNotFoundError(f"no rlog found for {route_id}")
 
@@ -136,7 +139,10 @@ def route_context(route_id: str) -> RouteContext:
                 and live_lateral_delay is not None)
 
     for msg in LogReader(boot):
-        w = msg.which()
+        try:                       # new-format rlogs contain events .which() throws on
+            w = msg.which()        # (KjException "non-union type") — skip the message,
+        except Exception:          # same guard as alignment.build_frame_timeline
+            continue
         if w == "initData" and not seen_initdata:
             seen_initdata = True
             for e in msg.initData.params.entries:
