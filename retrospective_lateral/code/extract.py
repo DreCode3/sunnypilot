@@ -35,6 +35,15 @@ REQUIRED_CACHE_CHANNELS = (
   "cx1_ema_curvature",
   "cx1_predicted_curvature",
   "cx1_blend",
+  "lead_prob",
+  "lead_d_rel",
+  "lead_time_headway_s",
+  "radar_lead_one_status",
+  "radar_lead_one_d_rel",
+  "lane_left_y20",
+  "lane_right_y20",
+  "road_edge_left_y20",
+  "road_edge_right_y20",
 )
 
 
@@ -116,13 +125,30 @@ def resample_channels(raw: RawChannels, fs_hz: float = C.FS_HZ) -> dict[str, np.
   t_grid = np.arange(t0, t1 + 0.5 / fs_hz, 1.0 / fs_hz, dtype=float)
   out: dict[str, np.ndarray] = {"t": (t_grid - t0).astype(np.float32), "mono_time": t_grid.astype(np.float64)}
 
+  model_geometry_keys: list[str] = []
+  for x_m in C.MODEL_LOOKAHEAD_X_M:
+    model_geometry_keys.extend([
+      f"model_y{x_m}",
+      f"lane_left_y{x_m}",
+      f"lane_right_y{x_m}",
+      f"lane_center_y{x_m}",
+      f"lane_width_y{x_m}",
+      f"road_edge_left_y{x_m}",
+      f"road_edge_right_y{x_m}",
+      f"road_edge_width_y{x_m}",
+    ])
   mapping = {
     "carState": ["v_ego", "v_ego_raw", "a_ego", "steering_angle_deg", "steering_rate_deg", "steering_torque", "yaw_rate"],
     "carControl": ["act_curvature", "current_curvature"],
     "controlsState": ["desired_curvature", "controls_curvature"],
-    "modelV2": ["model_y0", "model_y20", "lane_center_y0", "lane_center_y20", "lane_width_y0", "lane_width_y20", "lane_prob_left", "lane_prob_right", "orientation_rate_z0"],
+    "modelV2": model_geometry_keys + ["lane_prob_left", "lane_prob_right", "road_edge_std_left", "road_edge_std_right", "orientation_rate_z0"],
     "liveLocationKalman": ["lat", "lon", "yaw_rate_calibrated", "roll", "pitch"],
     "liveCalibration": ["cal_roll", "cal_pitch", "cal_yaw"],
+    "leadModel": ["lead_prob", "lead_d_rel", "lead_y_rel", "lead_v"],
+    "radarState": [
+      "radar_lead_one_d_rel", "radar_lead_one_y_rel", "radar_lead_one_v_rel", "radar_lead_one_model_prob",
+      "radar_lead_two_d_rel", "radar_lead_two_y_rel", "radar_lead_two_v_rel", "radar_lead_two_model_prob",
+    ],
     "cpTelemetry": [
       "cp_desired_curvature", "cp_predicted_curvature", "cp_ema_curvature",
       "cp_pre_rate_limit", "cp_rate_limited", "cp_final_command",
@@ -142,6 +168,7 @@ def resample_channels(raw: RawChannels, fs_hz: float = C.FS_HZ) -> dict[str, np.
     "carState": ["steering_pressed", "left_blinker", "right_blinker", "can_valid"],
     "carControl": ["lat_active", "long_active"],
     "modelV2": ["lane_change_state"],
+    "radarState": ["radar_lead_one_status", "radar_lead_two_status"],
     "cpTelemetry": ["cp_override", "cp_reset", "cp_ramp", "cp_rate_limited_flag", "cp_anti_windup"],
     "cx1Telemetry": ["cx1_override", "cx1_lane_change", "cx1_burst", "cx1_path4_release", "cx1_path4_enabled"],
   }
@@ -158,6 +185,14 @@ def resample_channels(raw: RawChannels, fs_hz: float = C.FS_HZ) -> dict[str, np.
       y = np.asarray(raw.values.get(family, {}).get(key, []), dtype=float)
       out[key] = _nearest_flag(t, y, t_grid, max_hold_s=max_hold_s) if len(y) else np.zeros_like(t_grid, dtype=np.float32)
   out["blinker"] = ((out.get("left_blinker", 0) > 0.5) | (out.get("right_blinker", 0) > 0.5)).astype(np.float32)
+  v_ego = out.get("v_ego", np.full_like(t_grid, np.nan, dtype=np.float32)).astype(float)
+  lead_d_rel = out.get("lead_d_rel", np.full_like(t_grid, np.nan, dtype=np.float32)).astype(float)
+  out["lead_time_headway_s"] = np.divide(
+    lead_d_rel,
+    v_ego,
+    out=np.full_like(v_ego, np.nan, dtype=np.float32),
+    where=(v_ego > 1.0) & np.isfinite(lead_d_rel),
+  ).astype(np.float32)
   return out
 
 
@@ -281,17 +316,37 @@ def _extract_message(raw: RawChannels, msg: Any) -> None:
   elif which == "modelV2":
     m = msg.modelV2
     lane_change = 0 if str(m.meta.laneChangeState) == "off" else 1
+    lead_prob, lead_d_rel, lead_y_rel, lead_v = _lead_v3_values(m)
     raw.add("modelV2", t, {
-      "model_y0": _interp_model_xy(m.position.x, m.position.y, 0.0),
-      "model_y20": _interp_model_xy(m.position.x, m.position.y, 20.0),
-      "lane_center_y0": _lane_center(m, 0.0)[0],
-      "lane_center_y20": _lane_center(m, 20.0)[0],
-      "lane_width_y0": _lane_center(m, 0.0)[1],
-      "lane_width_y20": _lane_center(m, 20.0)[1],
+      **_model_geometry(m),
       "lane_prob_left": float(m.laneLineProbs[1]) if len(m.laneLineProbs) > 2 else np.nan,
       "lane_prob_right": float(m.laneLineProbs[2]) if len(m.laneLineProbs) > 2 else np.nan,
+      "road_edge_std_left": float(m.roadEdgeStds[0]) if len(getattr(m, "roadEdgeStds", [])) > 1 else np.nan,
+      "road_edge_std_right": float(m.roadEdgeStds[1]) if len(getattr(m, "roadEdgeStds", [])) > 1 else np.nan,
       "orientation_rate_z0": float(m.orientationRate.z[0]) if len(m.orientationRate.z) else np.nan,
       "lane_change_state": float(lane_change),
+    })
+    raw.add("leadModel", t, {
+      "lead_prob": lead_prob,
+      "lead_d_rel": lead_d_rel,
+      "lead_y_rel": lead_y_rel,
+      "lead_v": lead_v,
+    })
+  elif which == "radarState":
+    radar = msg.radarState
+    lead_one = radar.leadOne
+    lead_two = radar.leadTwo
+    raw.add("radarState", t, {
+      "radar_lead_one_status": _lead_status_value(lead_one),
+      "radar_lead_one_d_rel": _lead_float_value(lead_one, "dRel"),
+      "radar_lead_one_y_rel": _lead_float_value(lead_one, "yRel"),
+      "radar_lead_one_v_rel": _lead_float_value(lead_one, "vRel"),
+      "radar_lead_one_model_prob": _lead_float_value(lead_one, "modelProb"),
+      "radar_lead_two_status": _lead_status_value(lead_two),
+      "radar_lead_two_d_rel": _lead_float_value(lead_two, "dRel"),
+      "radar_lead_two_y_rel": _lead_float_value(lead_two, "yRel"),
+      "radar_lead_two_v_rel": _lead_float_value(lead_two, "vRel"),
+      "radar_lead_two_model_prob": _lead_float_value(lead_two, "modelProb"),
     })
   elif which == "liveLocationKalman":
     loc = msg.liveLocationKalman
@@ -350,6 +405,65 @@ def _lane_center(model: Any, xq: float) -> tuple[float, float]:
   if not np.isfinite(left) or not np.isfinite(right):
     return np.nan, np.nan
   return float(0.5 * (left + right)), float(abs(right - left))
+
+
+def _line_pair_geometry(lines: Any, left_index: int, right_index: int, xq: float) -> tuple[float, float, float]:
+  if len(lines) <= max(left_index, right_index):
+    return np.nan, np.nan, np.nan
+  left = _interp_model_xy(lines[left_index].x, lines[left_index].y, xq)
+  right = _interp_model_xy(lines[right_index].x, lines[right_index].y, xq)
+  if not np.isfinite(left) or not np.isfinite(right):
+    return np.nan, np.nan, np.nan
+  return float(left), float(right), float(abs(right - left))
+
+
+def _model_geometry(model: Any) -> dict[str, float]:
+  out: dict[str, float] = {}
+  road_edges = getattr(model, "roadEdges", [])
+  for x_m in C.MODEL_LOOKAHEAD_X_M:
+    xq = float(x_m)
+    model_y = _interp_model_xy(model.position.x, model.position.y, xq)
+    lane_left, lane_right, lane_width = _line_pair_geometry(model.laneLines, 1, 2, xq)
+    road_left, road_right, road_width = _line_pair_geometry(road_edges, 0, 1, xq)
+    out.update({
+      f"model_y{x_m}": model_y,
+      f"lane_left_y{x_m}": lane_left,
+      f"lane_right_y{x_m}": lane_right,
+      f"lane_center_y{x_m}": float(0.5 * (lane_left + lane_right)) if np.isfinite(lane_left) and np.isfinite(lane_right) else np.nan,
+      f"lane_width_y{x_m}": lane_width,
+      f"road_edge_left_y{x_m}": road_left,
+      f"road_edge_right_y{x_m}": road_right,
+      f"road_edge_width_y{x_m}": road_width,
+    })
+  return out
+
+
+def _lead_v3_values(model: Any) -> tuple[float, float, float, float]:
+  try:
+    if len(model.leadsV3) == 0:
+      return 0.0, np.nan, np.nan, np.nan
+    lead = model.leadsV3[0]
+    prob = float(lead.prob)
+    d_rel = float(lead.x[0]) if len(lead.x) else np.nan
+    y_rel = float(lead.y[0]) if len(lead.y) else np.nan
+    v_lead = float(lead.v[0]) if len(lead.v) else np.nan
+    return prob, d_rel, y_rel, v_lead
+  except Exception:
+    return 0.0, np.nan, np.nan, np.nan
+
+
+def _lead_status_value(lead: Any) -> float:
+  try:
+    return 1.0 if lead.status else 0.0
+  except Exception:
+    return 0.0
+
+
+def _lead_float_value(lead: Any, field: str) -> float:
+  try:
+    return float(getattr(lead, field))
+  except Exception:
+    return np.nan
 
 
 def _cached_sample_count(npz_path: Path) -> int:

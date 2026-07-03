@@ -36,6 +36,86 @@ def _cx1_line(frame, command_curvature, *, blend):
   )
 
 
+def _model_lead_message(t_s, *, prob=0.8, x=24.0, y=0.4, v=12.0):
+  lead = SimpleNamespace(
+    prob=prob,
+    x=[x],
+    y=[y],
+    v=[v],
+  )
+  model = SimpleNamespace(
+    position=SimpleNamespace(x=[0.0, 20.0], y=[0.0, 0.0]),
+    laneLines=[],
+    laneLineProbs=[],
+    orientationRate=SimpleNamespace(z=[]),
+    meta=SimpleNamespace(laneChangeState="off"),
+    leadsV3=[lead],
+  )
+  return SimpleNamespace(
+    logMonoTime=int(t_s * 1_000_000_000),
+    which=lambda: "modelV2",
+    modelV2=model,
+  )
+
+
+def _model_geometry_message(t_s, *, scale=1.0):
+  xs = [0.0, 10.0, 20.0, 30.0]
+
+  def line(offset, slope):
+    return SimpleNamespace(
+      x=xs,
+      y=[scale * (offset + slope * x) for x in xs],
+    )
+
+  model = SimpleNamespace(
+    position=SimpleNamespace(x=xs, y=[scale * 0.01 * x for x in xs]),
+    laneLines=[
+      line(-5.0, 0.00),
+      line(-1.8, 0.02),
+      line(1.8, 0.04),
+      line(5.0, 0.00),
+    ],
+    laneLineProbs=[0.1, 0.8, 0.9, 0.1],
+    roadEdges=[
+      line(-4.5, 0.01),
+      line(4.7, 0.03),
+    ],
+    roadEdgeStds=[0.2, 0.3],
+    orientationRate=SimpleNamespace(z=[0.01]),
+    meta=SimpleNamespace(laneChangeState="off"),
+    leadsV3=[],
+  )
+  return SimpleNamespace(
+    logMonoTime=int(t_s * 1_000_000_000),
+    which=lambda: "modelV2",
+    modelV2=model,
+  )
+
+
+def _radar_message(t_s, *, status=True, d_rel=18.0, y_rel=0.2, v_rel=-1.5, model_prob=0.7):
+  lead = SimpleNamespace(
+    status=status,
+    dRel=d_rel,
+    yRel=y_rel,
+    vRel=v_rel,
+    modelProb=model_prob,
+    radar=True,
+  )
+  empty = SimpleNamespace(
+    status=False,
+    dRel=0.0,
+    yRel=0.0,
+    vRel=0.0,
+    modelProb=0.0,
+    radar=False,
+  )
+  return SimpleNamespace(
+    logMonoTime=int(t_s * 1_000_000_000),
+    which=lambda: "radarState",
+    radarState=SimpleNamespace(leadOne=lead, leadTwo=empty),
+  )
+
+
 def test_resample_channels_outputs_fixed_grid_and_masks_large_gaps():
   raw = RawChannels()
   raw.add("carState", 0.0, {"v_ego": 10.0, "steering_angle_deg": 0.0, "yaw_rate": 0.0})
@@ -276,6 +356,68 @@ def test_write_route_cache_resamples_cp_and_cx1_log_message_channels(monkeypatch
     np.testing.assert_allclose(data["cx1_blend"], [0.25, 0.50, 0.75], rtol=1e-5)
     assert data["cp_rate_limited_flag"].tolist() == [1.0, 1.0, 1.0]
     assert data["cx1_lane_change"].tolist() == [1.0, 1.0, 1.0]
+
+
+def test_resample_channels_extracts_model_and_radar_lead_context():
+  raw = RawChannels()
+  raw.add("carState", 0.0, {"v_ego": 12.0})
+  raw.add("carState", 0.1, {"v_ego": 12.0})
+  extract._extract_message(raw, _model_lead_message(0.0, prob=0.9, x=24.0, y=0.5, v=11.5))
+  extract._extract_message(raw, _model_lead_message(0.1, prob=0.7, x=20.0, y=0.2, v=11.0))
+  extract._extract_message(raw, _radar_message(0.0, d_rel=18.0, y_rel=0.1, v_rel=-2.0, model_prob=0.8))
+  extract._extract_message(raw, _radar_message(0.1, d_rel=16.0, y_rel=0.1, v_rel=-1.0, model_prob=0.7))
+
+  out = resample_channels(raw, fs_hz=20.0)
+
+  assert "lead_prob" in out
+  assert "lead_d_rel" in out
+  assert "lead_time_headway_s" in out
+  assert "radar_lead_one_d_rel" in out
+  np.testing.assert_allclose(out["lead_prob"], [0.9, 0.8, 0.7], rtol=1e-5)
+  np.testing.assert_allclose(out["lead_d_rel"], [24.0, 22.0, 20.0], rtol=1e-5)
+  np.testing.assert_allclose(out["lead_time_headway_s"], [2.0, 22.0 / 12.0, 20.0 / 12.0], rtol=1e-5)
+  np.testing.assert_allclose(out["radar_lead_one_d_rel"], [18.0, 17.0, 16.0], rtol=1e-5)
+  assert out["radar_lead_one_status"].tolist() == [1.0, 1.0, 1.0]
+
+
+def test_resample_channels_extracts_multi_lookahead_lane_geometry_and_road_edges():
+  raw = RawChannels()
+  raw.add("carState", 0.0, {"v_ego": 12.0})
+  raw.add("carState", 0.1, {"v_ego": 12.0})
+  extract._extract_message(raw, _model_geometry_message(0.0, scale=1.0))
+  extract._extract_message(raw, _model_geometry_message(0.1, scale=2.0))
+
+  out = resample_channels(raw, fs_hz=20.0)
+
+  for x_m in (0, 5, 10, 15, 20, 30):
+    for prefix in (
+      "model_y",
+      "lane_left_y",
+      "lane_right_y",
+      "lane_center_y",
+      "lane_width_y",
+      "road_edge_left_y",
+      "road_edge_right_y",
+      "road_edge_width_y",
+    ):
+      key = f"{prefix}{x_m}"
+      assert key in out
+      assert out[key].shape == out["t"].shape
+
+  np.testing.assert_allclose(out["model_y5"], [0.05, 0.075, 0.1], rtol=1e-5)
+  np.testing.assert_allclose(out["model_y15"], [0.15, 0.225, 0.3], rtol=1e-5)
+  np.testing.assert_allclose(out["model_y30"], [0.3, 0.45, 0.6], rtol=1e-5)
+  np.testing.assert_allclose(out["lane_center_y5"], [0.15, 0.225, 0.3], rtol=1e-5)
+  np.testing.assert_allclose(out["lane_width_y15"], [3.9, 5.85, 7.8], rtol=1e-5)
+  np.testing.assert_allclose(out["lane_left_y20"], [-1.4, -2.1, -2.8], rtol=1e-5)
+  np.testing.assert_allclose(out["lane_right_y20"], [2.6, 3.9, 5.2], rtol=1e-5)
+  np.testing.assert_allclose(out["lane_center_y20"], [0.6, 0.9, 1.2], rtol=1e-5)
+  np.testing.assert_allclose(out["lane_width_y20"], [4.0, 6.0, 8.0], rtol=1e-5)
+  np.testing.assert_allclose(out["road_edge_left_y30"], [-4.2, -6.3, -8.4], rtol=1e-5)
+  np.testing.assert_allclose(out["road_edge_right_y30"], [5.6, 8.4, 11.2], rtol=1e-5)
+  np.testing.assert_allclose(out["road_edge_width_y30"], [9.8, 14.7, 19.6], rtol=1e-5)
+  np.testing.assert_allclose(out["road_edge_std_left"], [0.2, 0.2, 0.2], rtol=1e-5)
+  np.testing.assert_allclose(out["road_edge_std_right"], [0.3, 0.3, 0.3], rtol=1e-5)
 
 
 def test_resample_channels_interpolates_sparse_cp_telemetry_between_one_hz_samples():
