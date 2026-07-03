@@ -47,16 +47,20 @@ def build_frame_timeline(route_id: str) -> tuple:
         wide_by_eof = {}
         road = []
         try:                                          # corrupt/truncated rlog → skip segment
-            for m in LogReader(str(seg / "rlog.zst")):
-                w = m.which()
-                if w == "roadEncodeIdx":
+            lr = LogReader(str(seg / "rlog.zst"))
+        except Exception:
+            continue
+        for m in lr:                                  # a SINGLE corrupt event (.which() throws on
+            try:                                      # new-format rlogs) must skip that message
+                w = m.which()                         # only, NOT abort the whole segment (which
+                if w == "roadEncodeIdx":              # silently emptied the timeline for cf/ce).
                     e = m.roadEncodeIdx
                     road.append((int(e.segmentNum), int(e.segmentId), int(e.frameId), e.timestampEof * 1e-9))
                 elif w == "wideRoadEncodeIdx":
                     e = m.wideRoadEncodeIdx
                     wide_by_eof[round(e.timestampEof * 1e-9, 3)] = int(e.segmentId)
-        except Exception:
-            continue
+            except Exception:
+                continue
         for snum, sid, fid, eof in road:
             if sid >= fcount:                         # truncation guard
                 continue
