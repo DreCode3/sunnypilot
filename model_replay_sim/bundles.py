@@ -71,9 +71,12 @@ def _remote_for(bundle: str) -> str:
 
 
 def bundle_onnx_paths(bundle: str) -> list[str]:
-    """The ``selfdrive/modeld/models/<name>.onnx`` paths this bundle ships, driven by
-    its ``split`` flag in ``C.BUNDLES``."""
-    names = _SPLIT_MODEL if _bundle_cfg(bundle)["split"] else _TWO_MODEL
+    """The ``selfdrive/modeld/models/<name>.onnx`` paths this bundle ships. An explicit
+    per-bundle ``models`` list in ``C.BUNDLES`` wins (newer layouts, e.g. the 2026.002
+    stock bundle ships vision + on_policy with NO off_policy); otherwise driven by the
+    ``split`` flag."""
+    cfg = _bundle_cfg(bundle)
+    names = cfg.get("models") or (_SPLIT_MODEL if cfg["split"] else _TWO_MODEL)
     return [f"{_MODELS_DIR}/{n}" for n in names]
 
 

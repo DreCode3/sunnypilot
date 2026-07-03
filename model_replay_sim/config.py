@@ -31,4 +31,13 @@ BUNDLES = {
   "CD210":  {"full_sha": "55f66e2246359c6593605399a0199d94d13ad90d", "repo": "commaai/openpilot",     "split": False, "internal_names": {"C210M", "CD210"}, "img_buffer_length": 5, "anchor_validated": True},
   "Nevada": {"full_sha": "3193eac5e385aa010694a8ac192ff38ffe000193", "repo": "commaai/openpilot",     "split": False, "internal_names": {"NM", "Nevada"}, "img_buffer_length": 5, "anchor_validated": True},
   "OPM7":   {"full_sha": "052692b25d63c5ddda276b5c2271383b6aff129f", "repo": "sunnypilot/sunnypilot", "split": True,  "internal_names": {"OPM7"}, "img_buffer_length": 5, "anchor_validated": False},
+  # SP002 = the DEFAULT bundled model of stock sunnypilot dev v2026.002.000 (device commit
+  # 3f8e959..., a squashed release whose message pins master commit 31dc4d8e... — that master
+  # commit ships the source ONNX as LFS). Drive-time rlog initData confirms no
+  # ModelManager_ActiveBundle param -> the default bundle ran the stock drives. New layout:
+  # vision + on_policy ONLY (off_policy retired after OPM7; big_* variants not used here).
+  # ONNX oids differ from Nevada AND OPM7 -> genuinely new model. anchor target: route_stock05.
+  "SP002":  {"full_sha": "31dc4d8e520f3b309acd05da79cc6ab448affad2", "repo": "sunnypilot/sunnypilot", "split": True,
+             "models": ["driving_vision.onnx", "driving_on_policy.onnx"],
+             "internal_names": {"SP002"}, "img_buffer_length": 5, "anchor_validated": False},
 }
