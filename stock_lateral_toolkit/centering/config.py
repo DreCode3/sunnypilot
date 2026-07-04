@@ -49,8 +49,8 @@ MIN_CONTRAST = 4.0                  # matched-filter peak vs row MAD
 REVIEW_EVERY_N = 5                  # deterministic ~20% review subset
 REVIEW_ACCEPT_MIN = 0.85            # M0 §2 trust rule
 PX_CORRECT_TOL = 5.0                # reviewer correction <= this counts as accept
-CAM_OFFSET_FROM_CENTERLINE_M = 0.0  # USER-MEASURED lever arm, + = camera RIGHT of centerline
-CAM_OFFSET_MEASURED = False         # m1_offsets refuses vehicle-frame output while False
+CAM_OFFSET_FROM_CENTERLINE_M = 0.008  # USER tape-measured 2026-07-04: camera 8 mm RIGHT of windshield center (+ = right)
+CAM_OFFSET_MEASURED = True          # measured 2026-07-04 (windshield-center reference)
 SIGMA_PIXEL_M = 0.03
 SIGMA_ROLL_M = 0.03
 SIGMA_YAW_M = 0.035

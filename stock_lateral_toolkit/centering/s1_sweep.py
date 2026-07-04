@@ -157,7 +157,8 @@ def analyze() -> None:
 
     _cons = CC.RESULTS_DIR / "m1" / "m1_results_consolidated.json"   # amended 2026-07-04b: sizing uses consolidated P
     _m1 = _cons if _cons.exists() else (CC.RESULTS_DIR / "m1" / "m1_results.json")
-    p_cam = json.loads(_m1.read_text())["median_offset_cam_m"] if _m1.exists() else float("nan")
+    _j = json.loads(_m1.read_text()) if _m1.exists() else {}
+    p_cam = _j.get("median_offset_vehicle_m") or _j.get("median_offset_cam_m", float("nan"))  # M0 §1: P is vehicle-frame when the lever arm is measured
     if not np.isfinite(p_cam):
         print("NOTE: M1 not done yet — gates evaluated with p_cam=nan (sizing gates will fail); "
               "re-run --analyze after Task 9.")
