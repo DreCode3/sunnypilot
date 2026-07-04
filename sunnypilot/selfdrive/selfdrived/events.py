@@ -208,6 +208,22 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
       Priority.LOW, VisualAlert.none, AudibleAlert.none, 1.),
   },
 
+  EventNameSP.aolLowLaneConfidence: {
+    ET.WARNING: Alert(
+      "Lane detection lost",
+      "Take control",
+      AlertStatus.userPrompt, AlertSize.mid,
+      Priority.MID, VisualAlert.steerRequired, AudibleAlert.none, .2),
+  },
+
+  EventNameSP.aolLaneDeparture: {
+    ET.WARNING: Alert(
+      "Lane departure",
+      "Take control",
+      AlertStatus.userPrompt, AlertSize.mid,
+      Priority.MID, VisualAlert.steerRequired, AudibleAlert.none, .2),
+  },
+
   EventNameSP.speedLimitActive: {
     ET.WARNING: Alert(
       "Auto adjusting to speed limit",
