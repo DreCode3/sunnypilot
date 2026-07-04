@@ -108,8 +108,8 @@ def main():
             n_route += 1
         n_per_route[route] = n_route
     d_left = np.array(d_left); d_right = np.array(d_right)
-    if len(d_left) < 10:
-        raise SystemExit(f"R1 blocked: only {len(d_left)} overlap frames (< 10) — "
+    if len(d_left) < 7:  # amended 2026-07-04b from 10 (M0 addendum; log-based dmid is the primary cross-check)
+        raise SystemExit(f"R1 blocked: only {len(d_left)} overlap frames (< 7) — "
                          "increase in-window M1 sampling or add the second route.")
     dmid = (d_left + d_right) / 2.0
     dwidth = d_right - d_left

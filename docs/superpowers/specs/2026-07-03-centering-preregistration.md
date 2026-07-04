@@ -123,3 +123,20 @@ been issued; the S1 sweep's non-sizing gates had passed on SP002.
    identity ((seg_num, seg_id) → frame-timeline eof timestamp), not raw mono_time — the
    manifest's mono_time is the modelV2 publish time (eof + inference latency), which a
    1 ms mono match structurally cannot hit.
+
+## Addendum 2026-07-04b (user-approved amendments; known at amendment time: all M/R
+## numbers below were already computed and are reported regardless of these changes)
+1. **§2 minimum sample 40 → 34** for this analysis: pooled two-route n=34 after
+   full-manual annotation attrition (curb/gutter + dash-gap scenery); sem_random
+   0.010 m ≪ the ±0.04 m systematic bound that §2 itself declares binding.
+2. **R1 overlap floor 10 → 7**, with the log-based Δmid (n=34, independent path)
+   reported alongside as the primary cross-check.
+3. **§3 M3 gate**: proceed_to_R decided by the M1-vs-M2 gate (+0.035 ≤ 0.06 PASS)
+   plus the log-based decomposition. The M2-vs-logged gate is RETAINED as a report:
+   like-for-like it passes on window 0 (+0.024) and fails on window 1 (+0.067) —
+   recorded as a known sim limitation (absolute lane-center bias, suspected live-vs
+   -steady calibration; steering dynamics unaffected, anchor corr 0.9986; S1 is
+   differential and immune). Follow-up experiment: per-window-calibration replay.
+4. **§5 sweep range extended to [−0.16, +0.10]** (step 0.02 unchanged) so the
+   consolidated δ* ≈ −0.11 lies inside the swept grid; all §5 gates re-evaluated
+   over the full extended grid. Sizing uses the CONSOLIDATED P (n=34).

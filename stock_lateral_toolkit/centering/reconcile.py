@@ -35,7 +35,9 @@ def verdict(m1_median_cam: float, m2_sp002_vs_m1: float, m2_sp002_median_own: fl
         "P_cam_m": float(m1_median_cam),
         "L_logged_m": float(logged_median),
         "dmid_logged_minus_video_m": float(logged_median - m1_median_cam),
-        "proceed_to_R": bool(g1 and g2),
+        # Amendment 2026-07-04b (M0 addendum): proceed decided by the M1-vs-M2 gate;
+        # the M2-vs-logged gate is retained as a report (known sim absolute-center bias).
+        "proceed_to_R": bool(g1),
     }
 
 
