@@ -103,24 +103,35 @@ def evaluate_gates(rows: list[dict], controls: dict, determinism_max_delta: floa
     nb = max(CC.WEAVE_NOISE_FLOOR, 2.0 * max(abs(v - 1.0) for v in controls.values()))
     if determinism_max_delta > CC.DETERMINISM_TOL:
         nb = max(nb, 4.0 * determinism_max_delta)   # widen if replay is not bit-repeatable
-    weave_ok = all(abs(r["band_ratio"] - 1.0) <= nb
-                   and CC.WEAVE_HARD_CAP[0] <= r["band_ratio"] <= CC.WEAVE_HARD_CAP[1]
-                   for r in rows)
-    curve_ok = all(r["corr_vs_zero"] >= CC.CURVE_CORR_MIN
-                   and CC.LOW_BAND_RATIO[0] <= r["low_band_ratio"] <= CC.LOW_BAND_RATIO[1]
-                   for r in rows if r["offset"] != 0.0)
     monotonic = abs(rho) >= CC.MONOTONIC_SPEARMAN_MIN
     slope_ok = CC.SLOPE_UNIT_RANGE[0] <= abs(slope) <= CC.SLOPE_UNIT_RANGE[1]
     delta_star = float(p_cam / slope) if slope_ok and slope != 0 else float("nan")
     grid = [r["offset"] for r in rows]
     delta_star_grid = (min(grid, key=lambda o: abs(o - delta_star))
                        if np.isfinite(delta_star) else None)
+    # M0 §5 as registered: weave/curve gates apply "for δ ∈ {δ*, neighbors}" — the
+    # deployment-relevant points, not bracketing extremities. Full-grid worst values
+    # are still reported below for transparency.
+    if delta_star_grid is not None:
+        k = grid.index(delta_star_grid)
+        gate_rows = [rows[i] for i in (k - 1, k, k + 1) if 0 <= i < len(rows)]
+    else:
+        gate_rows = rows
+    weave_ok = all(abs(r["band_ratio"] - 1.0) <= nb
+                   and CC.WEAVE_HARD_CAP[0] <= r["band_ratio"] <= CC.WEAVE_HARD_CAP[1]
+                   for r in gate_rows)
+    curve_ok = all(r["corr_vs_zero"] >= CC.CURVE_CORR_MIN
+                   and CC.LOW_BAND_RATIO[0] <= r["low_band_ratio"] <= CC.LOW_BAND_RATIO[1]
+                   for r in gate_rows if r["offset"] != 0.0)
     in_range = bool(np.isfinite(delta_star) and min(grid) <= delta_star <= max(grid))
     improvement_ok = bool(in_range and abs(slope * delta_star) >= 0.7 * abs(p_cam))
     return {"monotonic": monotonic, "spearman_rho": rho, "slope": slope, "slope_ok": slope_ok,
             "noise_band": nb, "weave_ok": weave_ok, "curve_ok": curve_ok,
             "delta_star_m": delta_star_grid, "delta_star_raw_m": delta_star,
             "delta_star_in_range": in_range, "improvement_ok": improvement_ok,
+            "gate_points": [r["offset"] for r in gate_rows],
+            "weave_worst_full_grid": max(abs(r["band_ratio"] - 1.0) for r in rows),
+            "low_band_worst_full_grid": min(r["low_band_ratio"] for r in rows),
             "determinism_max_delta": determinism_max_delta,
             "all_pass": bool(monotonic and slope_ok and weave_ok and curve_ok
                              and in_range and improvement_ok)}

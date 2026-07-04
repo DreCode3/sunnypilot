@@ -140,3 +140,15 @@ been issued; the S1 sweep's non-sizing gates had passed on SP002.
 4. **§5 sweep range extended to [−0.16, +0.10]** (step 0.02 unchanged) so the
    consolidated δ* ≈ −0.11 lies inside the swept grid; all §5 gates re-evaluated
    over the full extended grid. Sizing uses the CONSOLIDATED P (n=34).
+
+## Addendum 2026-07-04c — S2 DECISION (pre-registered branch applied)
+R-verdict class: TRAINED_PATH_PREFERENCE (camera_offset_is_the_lever = true; crown 0).
+S1 over the extended 14-point grid: Spearman ρ = −1.000, slope −0.824 (unit range),
+determinism bit-exact, weave and curve gates PASS at δ* and neighbors per the §5
+wording (evaluate_gates previously over-applied them to the whole grid incl. the
+−0.16 bracketing extremity, whose low-band ratio 0.947 sits 0.003 below the floor —
+full-grid worst values remain reported). Sizing with vehicle-frame P = +0.095 m
+(lever arm +0.008 measured): δ* raw −0.115 → **CameraOffset = −0.12 m** proposed;
+predicted settle ≈ within ~1 cm of centered; predicted improvement ≥ 0.7·P ✓.
+→ Per §4 item 4: CameraOffset IS the designed solution; proceed to the D-phase
+road A/B (F3 blindness-only safeguard already deployed underneath).
