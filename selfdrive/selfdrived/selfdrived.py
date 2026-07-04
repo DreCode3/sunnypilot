@@ -393,11 +393,12 @@ class SelfdriveD(CruiseHelper):
 
     # Re-add the latched event at the full update_events rate so onroadEventsSP does not
     # flap at the 20/100 Hz cadence mismatch; alive guard drops it if modelV2 stalls.
-    if self.aol_safeguard_enabled and self.aol_event_kind is not None and self.sm.alive['modelV2']:
-      if self.aol_event_kind == "departure":
-        self.events_sp.add(custom.OnroadEventSP.EventName.aolLaneDeparture)
-      else:
-        self.events_sp.add(custom.OnroadEventSP.EventName.aolLowLaneConfidence)
+    # SHIP DECISION 2026-07-04: blindness-only. Departure detections stay SHADOW —
+    # logged via the cloudlog telemetry above, never raised as a driver-facing event
+    # (its offline gates showed the pre-registered alert criteria are not achievable
+    # without nuisance alerts; detector kept running to collect redesign data).
+    if self.aol_safeguard_enabled and self.aol_event_kind == "lowConf" and self.sm.alive['modelV2']:
+      self.events_sp.add(custom.OnroadEventSP.EventName.aolLowLaneConfidence)
 
     for i, pandaState in enumerate(self.sm['pandaStates']):
       # All pandas must match the list of safetyConfigs, and if outside this list, must be silent or noOutput
