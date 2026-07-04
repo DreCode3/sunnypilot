@@ -14,8 +14,8 @@ USER GATE (M0 §2): fill `verdict` (accept|reject|correct) and `corrected_u_px` 
 verdict=correct) in review_subset.csv. m1_offsets.py enforces >=85% acceptance.
 
 RUN:
-  .venv311/bin/python stock_lateral_toolkit/centering/annotate.py            # propose + overlays
-  .venv311/bin/python stock_lateral_toolkit/centering/annotate.py --review   # write review_subset.csv
+  .venv311/bin/python stock_lateral_toolkit/centering/annotate.py [--route <name>]            # propose + overlays
+  .venv311/bin/python stock_lateral_toolkit/centering/annotate.py --review [--route <name>]   # write review_subset.csv
 """
 from __future__ import annotations
 
@@ -86,9 +86,9 @@ def propose_line(img: np.ndarray, H: np.ndarray, x_m: float, side: str) -> dict:
                 contrast=contrast, auto_ok=bool(contrast >= CC.MIN_CONTRAST))
 
 
-def _read_luma(seg_num: int, seg_id: int) -> np.ndarray:
+def _read_luma(seg_num: int, seg_id: int, route: str = CC.ROUTE) -> np.ndarray:
     from model_replay_sim.alignment import read_frame
-    return luma_plane(np.asarray(read_frame(CC.ROUTE, seg_num, seg_id), dtype=np.uint8).ravel())
+    return luma_plane(np.asarray(read_frame(route, seg_num, seg_id), dtype=np.uint8).ravel())
 
 
 def _overlay(img: np.ndarray, H: np.ndarray, proposals: list[dict], out_png: Path) -> None:
@@ -110,37 +110,39 @@ def _overlay(img: np.ndarray, H: np.ndarray, proposals: list[dict], out_png: Pat
     rgb.save(out_png)
 
 
-def run_proposals() -> None:
-    man_path = CC.RESULTS_DIR / "m1" / "frames_manifest.csv"
+def run_proposals(route: str = CC.ROUTE) -> None:
+    m1 = CC.m1_dir(route)
+    man_path = m1 / "frames_manifest.csv"
     rows = list(csv.DictReader(open(man_path)))
     from model_replay_sim.context import route_context
-    height = float(route_context(CC.ROUTE).height)
+    height = float(route_context(route).height)
     out_rows = []
     for r in rows:
         rpy = [float(r["cal_roll"]), float(r["cal_pitch"]), float(r["cal_yaw"])]
         Hm = G.road_homography(rpy, height, G.fcam_intrinsics())
-        img = _read_luma(int(r["seg_num"]), int(r["seg_id"]))
+        img = _read_luma(int(r["seg_num"]), int(r["seg_id"]), route)
         props = [propose_line(img, Hm, x, s) for x in CC.EVAL_DISTANCES_M for s in ("left", "right")]
-        _overlay(img, Hm, props, CC.RESULTS_DIR / "m1" / "overlays" / f"frame_{int(r['frame_idx']):03d}.png")
+        _overlay(img, Hm, props, m1 / "overlays" / f"frame_{int(r['frame_idx']):03d}.png")
         for p in props:
             out_rows.append(dict(frame_idx=int(r["frame_idx"]), mono_time=r["mono_time"],
                                  seg_num=r["seg_num"], seg_id=r["seg_id"], **{k: p[k] for k in
                                  ("x_m", "side", "y_road", "u_px", "v_px", "contrast", "auto_ok")},
                                  verdict="", corrected_u_px=""))
-    out = CC.RESULTS_DIR / "m1" / "proposals.csv"
+    out = m1 / "proposals.csv"
     with open(out, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(out_rows[0].keys()))
         w.writeheader(); w.writerows(out_rows)
     n_ok = sum(r["auto_ok"] for r in out_rows)
-    print(f"{len(out_rows)} proposals ({n_ok} auto_ok) -> {out}; overlays in results/m1/overlays/")
+    print(f"{len(out_rows)} proposals ({n_ok} auto_ok) -> {out}; overlays in {m1 / 'overlays'}/")
 
 
-def write_review_subset() -> None:
-    rows = list(csv.DictReader(open(CC.RESULTS_DIR / "m1" / "proposals.csv")))
+def write_review_subset(route: str = CC.ROUTE) -> None:
+    m1 = CC.m1_dir(route)
+    rows = list(csv.DictReader(open(m1 / "proposals.csv")))
     frames = sorted({int(r["frame_idx"]) for r in rows})
     review_frames = set(frames[:: CC.REVIEW_EVERY_N])
     sub = [r for r in rows if int(r["frame_idx"]) in review_frames]
-    out = CC.RESULTS_DIR / "m1" / "review_subset.csv"
+    out = m1 / "review_subset.csv"
     with open(out, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(sub[0].keys()))
         w.writeheader(); w.writerows(sub)
@@ -150,7 +152,8 @@ def write_review_subset() -> None:
 
 
 if __name__ == "__main__":
+    route_arg = sys.argv[sys.argv.index("--route") + 1] if "--route" in sys.argv else CC.ROUTE
     if "--review" in sys.argv:
-        write_review_subset()
+        write_review_subset(route_arg)
     else:
-        run_proposals()
+        run_proposals(route_arg)

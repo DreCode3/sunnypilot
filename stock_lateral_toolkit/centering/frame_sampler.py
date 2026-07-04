@@ -1,8 +1,9 @@
 """M1 frame sampler: stratified (speed bin x heading quadrant), de-correlated (>= 5 s
 apart), model-independent-straight sample from the route's retrospective cache,
-preferring frames INSIDE the shared M2 scene windows. Writes results/m1/frames_manifest.csv.
+preferring frames INSIDE the shared M2 scene windows. Writes the route's
+frames_manifest.csv (results/m1/ for the primary route, results/m1_<route>/ otherwise).
 
-RUN: .venv311/bin/python stock_lateral_toolkit/centering/frame_sampler.py
+RUN: .venv311/bin/python stock_lateral_toolkit/centering/frame_sampler.py [--route <name>]
 """
 from __future__ import annotations
 
@@ -108,11 +109,11 @@ def sample(z, in_window_mask) -> list[int]:
     return sorted(chosen)
 
 
-def _in_window_mask(mono: np.ndarray) -> np.ndarray:
+def _in_window_mask(mono: np.ndarray, route: str = CC.ROUTE) -> np.ndarray:
     from stock_lateral_toolkit.centering.windows import load_windows
     mask = np.zeros(len(mono), dtype=bool)
     try:
-        wins = load_windows()
+        wins = load_windows(route)
     except FileNotFoundError:
         print("WARNING: no windows.json (run windows.py first); sampling without preference")
         return mask
@@ -123,10 +124,12 @@ def _in_window_mask(mono: np.ndarray) -> np.ndarray:
     return mask
 
 
-def main():
-    z = dict(np.load(CC.CACHE_NPZ))
+def main(route: str | None = None):
+    if route is None:
+        route = sys.argv[sys.argv.index("--route") + 1] if "--route" in sys.argv else CC.ROUTE
+    z = dict(np.load(CC.cache_npz(route)))
     mono = np.asarray(z["mono_time"], float)
-    in_win = _in_window_mask(mono)
+    in_win = _in_window_mask(mono, route)
     idxs = sample(z, in_win)
     if len(idxs) < CC.N_FRAMES_MIN:
         print(f"WARNING: only {len(idxs)} frames (< pre-registered minimum {CC.N_FRAMES_MIN}); "
@@ -139,7 +142,7 @@ def main():
     rows, dropped = [], 0
     for i in idxs:
         try:
-            al = map_window_to_frames(CC.ROUTE, [float(mono[i])])[0]
+            al = map_window_to_frames(route, [float(mono[i])])[0]
         except ValueError:
             dropped += 1
             continue
@@ -155,7 +158,7 @@ def main():
                          logged_center_y0=float(z["lane_center_y0"][i])))
     if not rows:
         raise SystemExit("frame_sampler: 0 usable frames after mapping — check eligibility inputs")
-    out = CC.RESULTS_DIR / "m1" / "frames_manifest.csv"
+    out = CC.m1_dir(route) / "frames_manifest.csv"
     out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w", newline="") as f:
         wcsv = csv.DictWriter(f, fieldnames=list(rows[0].keys()))

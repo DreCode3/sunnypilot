@@ -13,6 +13,22 @@ ROUTE = "route_stock05"        # the only stock route with LOCAL camera files (1
 CACHE_NPZ = REPO_ROOT / "retrospective_lateral" / "results" / "cache" / f"{ROUTE}.npz"
 TOOLKIT_CACHE = TOOLKIT_ROOT / "cache"
 
+# Second-route extension (Task 10 step 1b): extra routes with local camera files.
+# Per-route paths keep the primary route's historical locations byte-identical.
+ROUTES_EXTRA = ("route_stock04",)
+
+
+def cache_npz(route: str) -> Path:
+    return REPO_ROOT / "retrospective_lateral" / "results" / "cache" / f"{route}.npz"
+
+
+def m1_dir(route: str) -> Path:
+    return RESULTS_DIR / ("m1" if route == ROUTE else f"m1_{route}")
+
+
+def windows_json(route: str) -> Path:
+    return RESULTS_DIR / "m2" / ("windows.json" if route == ROUTE else f"windows_{route}.json")
+
 # M0 §1 canonical sign: offset > 0  ==  vehicle LEFT of lane center
 #                        ==  lane-center midpoint y > 0 in calibrated frame (y=+RIGHT).
 

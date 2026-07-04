@@ -6,8 +6,11 @@ disagreement, the consensus (per-frame median across models), and the overlap
 comparison against M1 video frames.
 
 RUN:
-  .venv311/bin/python stock_lateral_toolkit/centering/consensus.py --replay   # heavy (~20 min wall)
-  .venv311/bin/python stock_lateral_toolkit/centering/consensus.py --stats    # seconds
+  .venv311/bin/python stock_lateral_toolkit/centering/consensus.py --replay [--route <name>]  # heavy (~20 min wall)
+  .venv311/bin/python stock_lateral_toolkit/centering/consensus.py --stats                    # seconds
+
+Extra routes (config.ROUTES_EXTRA) replay SP002 only; --stats pools their vs_m1
+overlap with the primary route's (per-window consensus stays primary-route-only).
 """
 from __future__ import annotations
 
@@ -53,8 +56,10 @@ def pair_stats(a: np.ndarray, b: np.ndarray) -> dict:
             "corr": float(np.corrcoef(a[both], b[both])[0, 1]) if both.sum() > 2 else float("nan")}
 
 
-def _npz_path(bundle: str, window_id: int) -> Path:
-    return M2_DIR / f"replay_{bundle}_w{window_id}.npz"
+def _npz_path(bundle: str, window_id: int, route: str = CC.ROUTE) -> Path:
+    if route == CC.ROUTE:
+        return M2_DIR / f"replay_{bundle}_w{window_id}.npz"
+    return M2_DIR / f"replay_{bundle}_{route}_w{window_id}.npz"
 
 
 def _replay_job(args) -> str:
@@ -62,7 +67,7 @@ def _replay_job(args) -> str:
     from model_replay_sim.infer import replay_window
     r = replay_window(bundle, window["route_id"], window["mono_times"],
                       capture_outputs=("lane_lines", "lane_lines_prob"))
-    out = _npz_path(bundle, window["window_id"])
+    out = _npz_path(bundle, window["window_id"], window["route_id"])
     np.savez_compressed(out,
                         mono_time=r["mono_time"], v_ego=r["v_ego"],
                         desired_curvature=r["desired_curvature"],
@@ -73,18 +78,46 @@ def _replay_job(args) -> str:
     return str(out)
 
 
-def run_replays() -> None:
+def run_replays(route: str = CC.ROUTE) -> None:
     from stock_lateral_toolkit.centering.windows import load_windows
-    wins = load_windows()
+    wins = load_windows(route)
     M2_DIR.mkdir(parents=True, exist_ok=True)
-    jobs = [(b, w) for b in CC.BUNDLES_M2 for w in wins
-            if not _npz_path(b, w["window_id"]).exists()]      # resumable
-    print(f"{len(jobs)} replay jobs (bundles {CC.BUNDLES_M2} x {len(wins)} windows), "
+    if route == CC.ROUTE:
+        bundles = CC.BUNDLES_M2
+    else:
+        bundles = ("SP002",)
+        print(f"NOTE: extra route {route} replays SP002 only — the M0 §3 gate is "
+              "SP002-specific and Nevada/CD210 consensus was already characterized "
+              "on the primary route.")
+    jobs = [(b, w) for b in bundles for w in wins
+            if not _npz_path(b, w["window_id"], route).exists()]      # resumable
+    print(f"{len(jobs)} replay jobs (bundles {bundles} x {len(wins)} windows), "
           f"{CC.MAX_WORKERS_REPLAY} workers")
     with ProcessPoolExecutor(max_workers=CC.MAX_WORKERS_REPLAY,
                              mp_context=mp.get_context("spawn")) as ex:
         for done in ex.map(_replay_job, jobs):
             print("done:", done)
+
+
+def _route_center_series(route: str, bundle: str):
+    """Concatenated post-warmup (mono_time, center_y0) across a route's replay windows,
+    or None if the route's windows file or any of the bundle's replay npzs is missing."""
+    from stock_lateral_toolkit.centering.windows import load_windows
+    try:
+        wins = load_windows(route)
+    except FileNotFoundError:
+        return None
+    monos, cats = [], []
+    for w in wins:
+        p = _npz_path(bundle, w["window_id"], route)
+        if not p.exists():
+            return None
+        z = np.load(p)
+        split = int(z["split_index"])
+        c0, _ = lane_center_series(z["lane_lines"], 0.0)
+        monos.append(np.asarray(z["mono_time"])[split:])
+        cats.append(c0[split:])
+    return np.concatenate(monos), np.concatenate(cats)
 
 
 def run_stats() -> None:
@@ -124,17 +157,32 @@ def run_stats() -> None:
     # through the frame timeline to the eof timestamps the replay windows are keyed on.
     # (The manifest's own mono_time is the modelV2 PUBLISH time — eof + inference
     # latency — so a raw 1 ms mono match can never hit; frame identity is exact.)
-    m1_csv = CC.RESULTS_DIR / "m1" / "per_frame_offsets.csv"
-    if m1_csv.exists():
-        from model_replay_sim.alignment import build_frame_timeline
+    # Deltas pool across routes: extra routes contribute only the bundles they were
+    # replayed with (SP002); Nevada/CD210 stay primary-route-only.
+    from model_replay_sim.alignment import build_frame_timeline
+    res["vs_m1_per_route"] = {}
+    deltas_by_bundle: dict[str, list[float]] = {b: [] for b in CC.BUNDLES_M2}
+    counted_bundles: set[str] = set()
+    for route in (CC.ROUTE,) + CC.ROUTES_EXTRA:
+        m1_csv = CC.m1_dir(route) / "per_frame_offsets.csv"
+        if not m1_csv.exists():
+            if route == CC.ROUTE:
+                print("NOTE: m1 per-frame offsets not present yet; vs_m1 section empty (re-run --stats after Task 9)")
+            continue
         eof_by_seg = {(row.segment_num, row.segment_id): row.timestamp_eof_s
-                      for row in build_frame_timeline(CC.ROUTE)}
+                      for row in build_frame_timeline(route)}
         manifest = {int(r["frame_idx"]): r for r in
-                    csv.DictReader(open(CC.RESULTS_DIR / "m1" / "frames_manifest.csv"))}
+                    csv.DictReader(open(CC.m1_dir(route) / "frames_manifest.csv"))}
         m1_rows = [r for r in csv.DictReader(open(m1_csv)) if r["in_m2_window"] == "True"]
-        mono_cat = np.concatenate(mono_all)
         for b in CC.BUNDLES_M2:
-            cat = np.concatenate(centers_all[b])
+            if route == CC.ROUTE:
+                mono_cat = np.concatenate(mono_all)
+                cat = np.concatenate(centers_all[b])
+            else:
+                series = _route_center_series(route, b)
+                if series is None:       # bundle not replayed on this extra route
+                    continue
+                mono_cat, cat = series
             deltas = []
             for r in m1_rows:
                 man = manifest[int(r["frame_idx"])]
@@ -144,11 +192,19 @@ def run_stats() -> None:
                 k = int(np.argmin(np.abs(mono_cat - eof)))
                 if abs(mono_cat[k] - eof) < 1e-3:
                     deltas.append(float(cat[k]) - float(r["offset_cam_m"]))
-            res["vs_m1"][b] = {"n_overlap": len(deltas),
-                               "median_model_minus_video_m": float(np.median(deltas)) if deltas else None,
-                               "mad_m": float(np.median(np.abs(np.array(deltas) - np.median(deltas)))) if deltas else None}
-    else:
-        print("NOTE: m1 per-frame offsets not present yet; vs_m1 section empty (re-run --stats after Task 9)")
+            deltas_by_bundle[b].extend(deltas)
+            counted_bundles.add(b)
+            res["vs_m1_per_route"].setdefault(route, {})[b] = {
+                "n_overlap": len(deltas),
+                "median_model_minus_video_m": float(np.median(deltas)) if deltas else None,
+                "mad_m": float(np.median(np.abs(np.array(deltas) - np.median(deltas)))) if deltas else None}
+    for b in CC.BUNDLES_M2:
+        if b not in counted_bundles:
+            continue
+        deltas = deltas_by_bundle[b]
+        res["vs_m1"][b] = {"n_overlap": len(deltas),
+                           "median_model_minus_video_m": float(np.median(deltas)) if deltas else None,
+                           "mad_m": float(np.median(np.abs(np.array(deltas) - np.median(deltas)))) if deltas else None}
 
     (M2_DIR / "m2_results.json").write_text(json.dumps(res, indent=2))
     print(json.dumps(res, indent=2))
@@ -156,8 +212,9 @@ def run_stats() -> None:
 
 if __name__ == "__main__":
     if "--replay" in sys.argv:
-        run_replays()
+        route_arg = sys.argv[sys.argv.index("--route") + 1] if "--route" in sys.argv else CC.ROUTE
+        run_replays(route_arg)
     elif "--stats" in sys.argv:
         run_stats()
     else:
-        print("usage: consensus.py --replay | --stats")
+        print("usage: consensus.py --replay [--route <name>] | --stats")
