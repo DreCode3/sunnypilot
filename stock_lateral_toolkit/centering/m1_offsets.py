@@ -1,8 +1,9 @@
 """M1d: enforce the pre-registered annotation trust rule, then turn accepted proposals
 into per-frame physical offsets (canonical sign: + = vehicle LEFT of lane center) with
-the declared per-frame sigma. Writes results/m1/m1_results.json (+ per-frame CSV).
+the declared per-frame sigma. Writes the route's m1_results.json (+ per-frame CSV) in
+results/m1/ for the primary route, results/m1_<route>/ otherwise.
 
-RUN: .venv311/bin/python stock_lateral_toolkit/centering/m1_offsets.py
+RUN: .venv311/bin/python stock_lateral_toolkit/centering/m1_offsets.py [--route <name>]
 """
 from __future__ import annotations
 
@@ -69,12 +70,14 @@ def frame_offset_cam(rows) -> float | None:
     return float((y_left_cal + y_right_cal) / 2.0)
 
 
-def main():
-    m1 = CC.RESULTS_DIR / "m1"
+def main(route: str | None = None):
+    if route is None:
+        route = sys.argv[sys.argv.index("--route") + 1] if "--route" in sys.argv else CC.ROUTE
+    m1 = CC.m1_dir(route)
     props = list(csv.DictReader(open(m1 / "proposals.csv")))
     manifest = {int(r["frame_idx"]): r for r in csv.DictReader(open(m1 / "frames_manifest.csv"))}
     from model_replay_sim.context import route_context
-    height = float(route_context(CC.ROUTE).height)
+    height = float(route_context(route).height)
 
     # merge review verdicts (by frame_idx+x_m+side) and manifest calib into proposal rows
     review = {}

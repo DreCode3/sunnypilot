@@ -3,7 +3,7 @@ replay-eligible contiguous runs of a route. Pure (no model). The SAME windows.js
 read by the M1 sampler (frame preference), M2 consensus replays, and the S1 sweep, so
 all phases see identical frames.
 
-RUN: .venv311/bin/python stock_lateral_toolkit/centering/windows.py
+RUN: .venv311/bin/python stock_lateral_toolkit/centering/windows.py [--route <name>]
 """
 from __future__ import annotations
 
@@ -71,25 +71,26 @@ def select_scene_windows(route_id: str, n_windows: int, warmup_frames: int,
     return out
 
 
-def windows_path() -> Path:
-    return CC.RESULTS_DIR / "m2" / "windows.json"
+def windows_path(route: str = CC.ROUTE) -> Path:
+    return CC.windows_json(route)
 
 
-def write_windows(windows: list[dict]) -> Path:
-    p = windows_path()
+def write_windows(windows: list[dict], route: str = CC.ROUTE) -> Path:
+    p = windows_path(route)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(windows))
     return p
 
 
-def load_windows() -> list[dict]:
-    return json.loads(windows_path().read_text())
+def load_windows(route: str = CC.ROUTE) -> list[dict]:
+    return json.loads(windows_path(route).read_text())
 
 
 if __name__ == "__main__":
-    ws = select_scene_windows(CC.ROUTE, CC.N_WINDOWS, CC.WARMUP_FRAMES,
+    route = sys.argv[sys.argv.index("--route") + 1] if "--route" in sys.argv else CC.ROUTE
+    ws = select_scene_windows(route, CC.N_WINDOWS, CC.WARMUP_FRAMES,
                               CC.COMPARE_FRAMES, CC.MIN_COMPARE_FRAMES)
-    p = write_windows(ws)
+    p = write_windows(ws, route)
     for w in ws:
         m = w["mono_times"]
         print(f"window {w['window_id']}: {len(m)} frames ({w['n_compare']} compare) "

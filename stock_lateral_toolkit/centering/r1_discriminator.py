@@ -1,6 +1,7 @@
 """R1: does SP002 misplace the LANE (perception translation) or correctly place the
 lane and target off its center (trained preference)? Per-frame per-line comparison of
-replayed SP002 lane lines vs M1 video annotations on identical frames.
+replayed SP002 lane lines vs M1 video annotations on identical frames, pooled across
+the primary route and any ROUTES_EXTRA route with completed M1 + SP002 replays.
 
 RUN: .venv311/bin/python stock_lateral_toolkit/centering/r1_discriminator.py
 """
@@ -22,13 +23,13 @@ from stock_lateral_toolkit.centering import ground_plane as G
 from stock_lateral_toolkit.centering.m1_offsets import _accepted_y
 
 
-def _video_lines_per_frame() -> dict[int, dict]:
+def _video_lines_per_frame(route: str = CC.ROUTE) -> dict[int, dict]:
     """frame_idx -> {'mono_time', 'y_left_cal', 'y_right_cal'} from accepted proposals
     (median across eval distances; >= 2 accepted distances per side, as in m1_offsets)."""
-    m1 = CC.RESULTS_DIR / "m1"
+    m1 = CC.m1_dir(route)
     manifest = {int(r["frame_idx"]): r for r in csv.DictReader(open(m1 / "frames_manifest.csv"))}
     from model_replay_sim.context import route_context
-    height = float(route_context(CC.ROUTE).height)
+    height = float(route_context(route).height)
     review = {}
     rev = m1 / "review_subset.csv"
     if rev.exists():
@@ -60,12 +61,17 @@ def _video_lines_per_frame() -> dict[int, dict]:
     return out
 
 
-def _sp002_lines() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Concatenated post-warmup (mono, y_left, y_right) at x=0 from the M2 SP002 replays."""
+def _sp002_lines(route: str = CC.ROUTE) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Concatenated post-warmup (mono, y_left, y_right) at x=0 from the route's M2
+    SP002 replays. Raises FileNotFoundError when windows or replay npzs are missing."""
+    from stock_lateral_toolkit.centering.consensus import _npz_path
     from stock_lateral_toolkit.centering.windows import load_windows
     monos, yls, yrs = [], [], []
-    for w in load_windows():
-        z = np.load(CC.RESULTS_DIR / "m2" / f"replay_SP002_w{w['window_id']}.npz")
+    for w in load_windows(route):
+        p = _npz_path("SP002", w["window_id"], route)
+        if not p.exists():
+            raise FileNotFoundError(str(p))
+        z = np.load(p)
         s = int(z["split_index"])
         monos.append(np.asarray(z["mono_time"])[s:])
         yls.append(z["lane_lines"][s:, 1, 0, 0])
@@ -74,23 +80,33 @@ def _sp002_lines() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 
 def main():
-    video = _video_lines_per_frame()
-    mono, yl, yr = _sp002_lines()
     # Match by FRAME IDENTITY via the frame timeline's eof timestamps — the manifest
     # mono_time is the modelV2 publish time (eof + latency) and can never mono-match.
+    # d_left/d_right pool across the primary route and any completed extra route.
     from model_replay_sim.alignment import build_frame_timeline
-    eof_by_seg = {(row.segment_num, row.segment_id): row.timestamp_eof_s
-                  for row in build_frame_timeline(CC.ROUTE)}
     d_left, d_right = [], []
-    for fi, v in sorted(video.items()):
-        eof = eof_by_seg.get((v["seg_num"], v["seg_id"]))
-        if eof is None:
+    n_per_route: dict[str, int] = {}
+    for route in (CC.ROUTE,) + CC.ROUTES_EXTRA:
+        try:
+            video = _video_lines_per_frame(route)
+            mono, yl, yr = _sp002_lines(route)
+        except FileNotFoundError as e:
+            print(f"NOTE: {route}: skipped (missing input: {e})")
             continue
-        k = int(np.argmin(np.abs(mono - eof)))
-        if abs(mono[k] - eof) > 1e-3:
-            continue
-        d_left.append(float(yl[k]) - v["y_left_cal"])
-        d_right.append(float(yr[k]) - v["y_right_cal"])
+        eof_by_seg = {(row.segment_num, row.segment_id): row.timestamp_eof_s
+                      for row in build_frame_timeline(route)}
+        n_route = 0
+        for fi, v in sorted(video.items()):
+            eof = eof_by_seg.get((v["seg_num"], v["seg_id"]))
+            if eof is None:
+                continue
+            k = int(np.argmin(np.abs(mono - eof)))
+            if abs(mono[k] - eof) > 1e-3:
+                continue
+            d_left.append(float(yl[k]) - v["y_left_cal"])
+            d_right.append(float(yr[k]) - v["y_right_cal"])
+            n_route += 1
+        n_per_route[route] = n_route
     d_left = np.array(d_left); d_right = np.array(d_right)
     if len(d_left) < 10:
         raise SystemExit(f"R1 blocked: only {len(d_left)} overlap frames (< 10) — "
@@ -101,6 +117,7 @@ def main():
     boots = [np.median(rng.choice(dmid, len(dmid))) for _ in range(2000)]
     res = {
         "n_overlap": int(len(dmid)),
+        "n_overlap_per_route": n_per_route,
         "delta_left_median_m": float(np.median(d_left)),
         "delta_right_median_m": float(np.median(d_right)),
         "dmid_median_m": float(np.median(dmid)),
