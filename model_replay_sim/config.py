@@ -36,8 +36,11 @@ BUNDLES = {
   # commit ships the source ONNX as LFS). Drive-time rlog initData confirms no
   # ModelManager_ActiveBundle param -> the default bundle ran the stock drives. New layout:
   # vision + on_policy ONLY (off_policy retired after OPM7; big_* variants not used here).
-  # ONNX oids differ from Nevada AND OPM7 -> genuinely new model. anchor target: route_stock05.
+  # ONNX oids differ from Nevada AND OPM7 -> genuinely new model.
+  # ANCHOR-VALIDATED 2026-07-03 on route_stock05 (the drive it actually drove): corr 0.9986,
+  # band_ratio 0.993, 2059/2059 frames, lag-0 peaked — best anchor in the program; also
+  # confirms img_buffer_length=5/is_20hz and that this exact build made the stock drives.
   "SP002":  {"full_sha": "31dc4d8e520f3b309acd05da79cc6ab448affad2", "repo": "sunnypilot/sunnypilot", "split": True,
              "models": ["driving_vision.onnx", "driving_on_policy.onnx"],
-             "internal_names": {"SP002"}, "img_buffer_length": 5, "anchor_validated": False},
+             "internal_names": {"SP002"}, "img_buffer_length": 5, "anchor_validated": True},
 }
