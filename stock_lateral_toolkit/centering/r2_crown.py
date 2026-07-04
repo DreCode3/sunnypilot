@@ -26,6 +26,15 @@ from stock_lateral_toolkit.centering import config as CC
 DRIVES = ["stock_00", "stock_01", "stock_02", "stock_03", "stock_hiram_04", "stock_hiram_05"]
 FS = 20.0  # extract_drive caches are modelV2-cadence
 
+# R2's CALIBRATED drive set (2026-07-04). The FPR calibration (M0 §7) PASSES on this set
+# (FPR 0.0, power 0.95@0.03m / 1.0@0.06m). Extending with stock_01 fails calibration
+# (FPR 0.283 at the 0.07 gate; its series structure defeats the cross-drive pairing null
+# even after the thin-drive floor), and per the pre-registered rule an estimator that
+# fails calibration on a shape may not emit p-values on that shape — so the extension is
+# DISCARDED, not re-tuned. Any future drive-set change must re-pass r2_calibration first.
+# (DRIVES above stays the full set — R3's descriptive breakdown uses it, no p-values.)
+R2_DRIVES = ["stock_02", "stock_hiram_04", "stock_hiram_05"]
+
 
 def load_drive(name: str):
     z = np.load(CC.TOOLKIT_CACHE / f"{name}.npz", allow_pickle=True)
@@ -34,9 +43,18 @@ def load_drive(name: str):
     return d
 
 
-def window_table(drives=DRIVES) -> pd.DataFrame:
+# Estimator-shape floor (revised 2026-07-04, recalibrated per M0 §7): a drive contributing
+# fewer windows than this is dropped from the table. The cross-drive pairing null truncates
+# each pair to min(len) rows, so a 1-window drive collapses partner groups to 1 row and
+# destabilizes the permutation test (observed: FPR 0.226 with stock_00 at 1 window vs the
+# 0.07 gate). The FPR gate is the pre-registered contract; the table shape is not.
+MIN_WINDOWS_PER_DRIVE = 8
+
+
+def window_table(drives=R2_DRIVES) -> pd.DataFrame:
     """Per 30 s window: median signed offset / roll / speed on eligible frames
-    (engaged, unpressed, moving, finite offset+roll)."""
+    (engaged, unpressed, moving, finite offset+roll). Drives with fewer than
+    MIN_WINDOWS_PER_DRIVE qualifying windows are excluded (see note above)."""
     rows = []
     w = int(CC.R2_WINDOW_S * FS)
     for name in drives:
@@ -61,7 +79,14 @@ def window_table(drives=DRIVES) -> pd.DataFrame:
                 lat_med=float(np.nanmedian(d["lat"][a:a + w][m])),
                 lon_med=float(np.nanmedian(d["lon"][a:a + w][m])),
             ))
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    if len(df):
+        counts = df.groupby("drive_id")["offset_med"].transform("size")
+        dropped = sorted(df.loc[counts < MIN_WINDOWS_PER_DRIVE, "drive_id"].unique())
+        if dropped:
+            print(f"NOTE: dropped thin drives (<{MIN_WINDOWS_PER_DRIVE} windows): {dropped}")
+        df = df[counts >= MIN_WINDOWS_PER_DRIVE].reset_index(drop=True)
+    return df
 
 
 def direction_paired_hiram(df_04: dict, df_05: dict) -> dict:
