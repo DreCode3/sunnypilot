@@ -30,6 +30,7 @@ from openpilot.sunnypilot.selfdrive.car.car_specific import CarSpecificEventsSP
 from openpilot.sunnypilot.selfdrive.car.cruise_helpers import CruiseHelper
 from openpilot.sunnypilot.selfdrive.car.intelligent_cruise_button_management.controller import IntelligentCruiseButtonManagement
 from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
+from openpilot.sunnypilot.selfdrive.selfdrived.aol_monitor import AolSafeguardMonitor
 
 REPLAY = "REPLAY" in os.environ
 SIMULATION = "SIMULATION" in os.environ
@@ -174,6 +175,15 @@ class SelfdriveD(CruiseHelper):
     self.icbm = IntelligentCruiseButtonManagement(self.CP, self.CP_SP)
 
     self.car_events_sp = CarSpecificEventsSP(self.CP, self.CP_SP)
+
+    # AOL lateral safeguard (2026-07-01 incident, alert-only stock port).
+    # Kill switch is read once at startup: toggling AolSafeguardDisabled requires
+    # an openpilot restart (ignition cycle or reboot) to take effect.
+    self.aol_monitor = AolSafeguardMonitor()
+    self.aol_safeguard_enabled = not self.params.get_bool("AolSafeguardDisabled")
+    self.aol_alert_prev = None  # None | "lowConf" | "departure" (telemetry edge tracking)
+    self.aol_event_kind = None  # latched alert kind, added to events_sp at the full update_events rate
+    self.aol_log_ctr = 0
 
     CruiseHelper.__init__(self, self.CP)
 
@@ -339,6 +349,55 @@ class SelfdriveD(CruiseHelper):
       self.events_sp.add(custom.OnroadEventSP.EventName.laneTurnLeft)
     elif lane_turn_direction == TurnDirection.turnRight:
       self.events_sp.add(custom.OnroadEventSP.EventName.laneTurnRight)
+
+    # AOL lateral safeguard (2026-07-01 incident): visual alert instead of silently
+    # steering through model blindness or a developing lane departure.
+    # Stepped ONLY on fresh modelV2 frames (20 Hz) — the monitor's dt assumes it.
+    if self.aol_safeguard_enabled and self.sm.updated['modelV2']:
+      md = self.sm['modelV2']
+      lat_active = self.mads.active or self.active
+      inner_prob = min(md.laneLineProbs[1], md.laneLineProbs[2]) if len(md.laneLineProbs) >= 3 else 1.0
+      if len(md.laneLines) >= 3 and len(md.laneLines[1].y) and len(md.laneLines[2].y):
+        left_y, right_y = md.laneLines[1].y[0], md.laneLines[2].y[0]   # +y = RIGHT
+        lane_offset = (left_y + right_y) / 2.0                          # + = car LEFT of center
+        left_dist, right_dist = abs(left_y), abs(right_y)
+      else:
+        lane_offset, left_dist, right_dist = 0.0, 10.0, 10.0
+      maneuver = (md.meta.laneChangeState != LaneChangeState.off
+                  or CS.leftBlinker or CS.rightBlinker)
+      low_conf, departure = self.aol_monitor.update(
+        t=self.sm.logMonoTime['modelV2'] * 1e-9, lat_active=lat_active, v_ego=CS.vEgo,
+        inner_prob=inner_prob, lane_offset=lane_offset,
+        left_line_dist=left_dist, right_line_dist=right_dist, maneuver=maneuver)
+      alert_kind = "departure" if departure else ("lowConf" if low_conf else None)
+      self.aol_event_kind = alert_kind
+
+      # telemetry: cloudlog on fire/clear edges + 1 Hz while an alert is active.
+      # Rides the existing logMessage path; ~zero bytes on clean drives.
+      if alert_kind is None:
+        if self.aol_alert_prev is not None:
+          msg = f"aol_safeguard clear alert={self.aol_alert_prev} conf_ema={self.aol_monitor.conf_ema:.3f} offset={lane_offset:+.2f} v_ego={CS.vEgo:.1f}"
+          cloudlog.info(msg)
+        self.aol_log_ctr = 0
+      else:
+        self.aol_log_ctr += 1
+        if alert_kind != self.aol_alert_prev or self.aol_log_ctr >= 20:
+          offs = self.aol_monitor.offsets
+          rate = (offs[-1] - offs[0]) / ((len(offs) - 1) * self.aol_monitor.dt) if len(offs) >= 2 else 0.0
+          edge = "fire" if alert_kind != self.aol_alert_prev else "active"
+          conf_ema = self.aol_monitor.conf_ema
+          msg = f"aol_safeguard {edge} alert={alert_kind} conf_ema={conf_ema:.3f} offset={lane_offset:+.2f} rate={rate:+.2f} v_ego={CS.vEgo:.1f}"
+          cloudlog.info(msg)
+          self.aol_log_ctr = 0
+      self.aol_alert_prev = alert_kind
+
+    # Re-add the latched event at the full update_events rate so onroadEventsSP does not
+    # flap at the 20/100 Hz cadence mismatch; alive guard drops it if modelV2 stalls.
+    if self.aol_safeguard_enabled and self.aol_event_kind is not None and self.sm.alive['modelV2']:
+      if self.aol_event_kind == "departure":
+        self.events_sp.add(custom.OnroadEventSP.EventName.aolLaneDeparture)
+      else:
+        self.events_sp.add(custom.OnroadEventSP.EventName.aolLowLaneConfidence)
 
     for i, pandaState in enumerate(self.sm['pandaStates']):
       # All pandas must match the list of safetyConfigs, and if outside this list, must be silent or noOutput
