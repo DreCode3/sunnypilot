@@ -38,6 +38,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"DoUninstall", {CLEAR_ON_MANAGER_START, BOOL}},
     {"DriverTooDistracted", {CLEAR_ON_MANAGER_START | CLEAR_ON_IGNITION_ON, BOOL}},
     {"AlphaLongitudinalEnabled", {PERSISTENT | DEVELOPMENT_ONLY | BACKUP, BOOL}},
+    {"AolSafeguardDisabled", {PERSISTENT, BOOL, "0"}},
     {"enable_lane_positioning", {PERSISTENT, BOOL, "0"}},
     {"FordCurveMode", {PERSISTENT, STRING, "0"}},
     {"FordPath4Enabled", {PERSISTENT, BOOL, "0"}},
