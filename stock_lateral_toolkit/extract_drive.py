@@ -48,7 +48,7 @@ def _carparams(seg_paths):
 def _extract_seg(args):
     rl, sr, wb = args
     VM = VehicleModel_from(sr, wb)
-    mv = []; cs = []; co = []; cc = []; gps = []
+    mv = []; cs = []; co = []; cc = []; gps = []; rolls = []
     try:
         lr = LogReader(rl)
     except Exception:
@@ -76,7 +76,11 @@ def _extract_seg(args):
             co.append((t, float(m.carOutput.actuatorsOutput.curvature)))
         elif w == "liveLocationKalman":
             try:
-                pg = m.liveLocationKalman.positionGeodetic
+                loc = m.liveLocationKalman
+                o = loc.orientationNED
+                if o.valid and len(o.value) >= 1:
+                    rolls.append((t, float(o.value[0])))
+                pg = loc.positionGeodetic
                 if pg.valid and len(pg.value) >= 2 and abs(pg.value[0]) > 1:
                     gps.append((t, float(pg.value[0]), float(pg.value[1])))
             except Exception:
@@ -88,8 +92,9 @@ def _extract_seg(args):
                     gps.append((t, float(g.latitude), float(g.longitude)))
             except Exception:
                 pass
-    cs.sort(); co.sort(); cc.sort(); gps.sort()
+    cs.sort(); co.sort(); cc.sort(); gps.sort(); rolls.sort()
     cst = [x[0] for x in cs]; cot = [x[0] for x in co]; cct = [x[0] for x in cc]; gpst = [x[0] for x in gps]
+    rollt = [x[0] for x in rolls]
 
     def pv(arr, ts, t):
         i = bisect.bisect_right(ts, t) - 1
@@ -117,8 +122,10 @@ def _extract_seg(args):
         cmd = c_o[1] if c_o else np.nan
         ach = -VM.calc_curvature(math.radians(sa), max(v, 1.0), 0.0)  # +=RIGHT
         la, lo = gps_at(t)
+        rr = pv(rolls, rollt, t)
+        roll = rr[1] if rr is not None and (t - rr[0]) < 1.0 else np.nan
         out.append((t, la, lo, v, sa, yr, 1.0 if sp else 0.0, 1.0 if lat else 0.0,
-                    1.0 if en else 0.0, cmd, mcurv, ach, off, inner))
+                    1.0 if en else 0.0, cmd, mcurv, ach, off, inner, roll))
     return out
 
 
@@ -152,7 +159,7 @@ def main():
             rows.extend(seg_rows)
     rows.sort()
     arr = np.array(rows, dtype=np.float64)
-    cols = "t lat lon vEgo steerDeg yawRate pressed latActive enabled cmd_curv model_curv ach_curv offset innerProb".split()
+    cols = "t lat lon vEgo steerDeg yawRate pressed latActive enabled cmd_curv model_curv ach_curv offset innerProb roll".split()
     np.savez(out_npz, data=arr, cols=np.array(cols), steerRatio=sr, wheelbase=wb, fp=str(cp.carFingerprint))
     print(f"  -> {out_npz}: {len(arr)} frames, {np.sum(arr[:,7]>0.5)} latActive, "
           f"{np.sum(np.isfinite(arr[:,1]))} with GPS")
