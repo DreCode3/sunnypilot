@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """F3 acceptance gate: replay recorded rlogs through AolSafeguardMonitor.
 
+STOCK-PORT VERSION (2026-07-03): the monitor imports from THIS checkout
+(sunnypilot/selfdrive/selfdrived/aol_monitor.py via the openpilot/ symlink shim —
+no worktree), and the rlog corpus reads from the NAS mount.
+
 MUST-PASS gates (from handoff v3 §5/§9b):
   G1 ce decisive event (override at mono 212.54): departure alert >= 1.0 s before override.
   G2 cf blowout (deep-blind at 682.21): low-conf alert within 2.5 s of collapse onset.
@@ -11,37 +15,29 @@ REPORT-ONLY (user tunes thresholds if excessive):
   R1 low-conf alert episode count + total alert seconds per route (fatigue check).
 
 RUN:  cd /Users/dregilley/Documents/GitHub/sunnypilot && \
-      PYTHONPATH=$PWD:$PWD/opendbc_repo:/Users/dregilley/Documents/GitHub/sp-aol-f3 \
+      PYTHONPATH=$PWD:$PWD/opendbc_repo \
       .venv311/bin/python retrospective_lateral/incident_2026_07_01/scripts/f3_replay_check.py
 """
-import glob, re, sys
-import importlib.util
-import numpy as np
+import glob, os, re, sys
 
 ROOT = "/Users/dregilley/Documents/GitHub/sunnypilot"
-WORKTREE = "/Users/dregilley/Documents/GitHub/sp-aol-f3"
-sys.path.insert(0, ROOT); sys.path.insert(0, ROOT + "/opendbc_repo"); sys.path.append(WORKTREE)
+CORPUS = "/Volumes/RAID_6_HDD/OpenPilot Data/explorer_st_logs"
+sys.path.insert(0, ROOT); sys.path.insert(0, ROOT + "/opendbc_repo")
 
 from openpilot.tools.lib.logreader import LogReader
-# HARNESS FIX (import): `openpilot.sunnypilot.selfdrive.selfdrived` is a regular package rooted
-# in the MAIN checkout (its __init__.py does not export aol_monitor). Once `openpilot` is
-# imported above for LogReader, a plain `from openpilot.sunnypilot...selfdrived import aol_monitor`
-# resolves to MAIN and raises ImportError. Load the worktree file DIRECTLY by path so we exercise
-# the exact committed monitor selfdrived would run. Monitor is pure (deque + numpy only).
-sys.path.insert(0, WORKTREE)
-_mon_path = WORKTREE + "/openpilot/sunnypilot/selfdrive/selfdrived/aol_monitor.py"
-_spec = importlib.util.spec_from_file_location("aol_monitor_worktree_f3", _mon_path)
-am_mod = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(am_mod)
-AolSafeguardMonitor = am_mod.AolSafeguardMonitor
+import openpilot.sunnypilot.selfdrive.selfdrived.aol_monitor as am_mod
+from openpilot.sunnypilot.selfdrive.selfdrived.aol_monitor import AolSafeguardMonitor
 print("monitor module:", am_mod.__file__)
-assert WORKTREE in am_mod.__file__, "monitor must come from the aol-fixes-f3 worktree"
+assert os.path.realpath(am_mod.__file__).startswith(os.path.realpath(ROOT)), \
+    "monitor must come from this checkout"
+assert os.path.isdir(CORPUS), \
+    f"NAS corpus not mounted: {CORPUS} (mount smb://datacore.local/RAID_6_HDD first)"
 
 
 def _seg_num(path):
-    # HARNESS FIX (ordering): sort segments by numeric index so the monitor sees a continuous
-    # chronological time stream, exactly like selfdrived. Lexical sort interleaves --10 before
-    # --2, injecting large mono-time discontinuities across segment boundaries.
+    # Sort segments by numeric index so the monitor sees a continuous chronological
+    # time stream, exactly like selfdrived. Lexical sort interleaves --10 before --2,
+    # injecting large mono-time discontinuities across segment boundaries.
     m = re.search(r"--(\d+)/rlog\.zst$", path)
     return int(m.group(1)) if m else 0
 
@@ -52,7 +48,9 @@ def replay(route):
     cs_state = dict(v=0.0, lb=False, rb=False)
     lat = dict(active=False)
     mon = AolSafeguardMonitor()
-    for rl in sorted(glob.glob(f"{ROOT}/explorer_st_logs/{route}/*/rlog.zst"), key=_seg_num):
+    files = sorted(glob.glob(f"{CORPUS}/{route}/*/rlog.zst"), key=_seg_num)
+    print(f"  {route}: {len(files)} segments")
+    for rl in files:
         try:
             lr = LogReader(rl)
         except Exception:
@@ -125,3 +123,4 @@ print(f"G3 blind-in-lane-change alert before override: {'PASS' if g3 else 'FAIL'
 
 old_dep = sum(len(episodes(results[r], "dep")) for r in ("route_c5", "route_c7", "route_b5", "route_7f"))
 print(f"G4 departure alerts on OLD routes: {'PASS' if old_dep == 0 else 'FAIL'}  (count {old_dep})")
+sys.exit(0 if (g1 and (212.54 - g1[0]) >= 1.0 and g2 and g3 and old_dep == 0) else 1)
