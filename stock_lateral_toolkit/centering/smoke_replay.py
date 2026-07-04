@@ -33,15 +33,25 @@ def main():
 
     r_none = replay_window("SP002", CC.ROUTE, mono, camera_offset=None)
     r_zero = replay_window("SP002", CC.ROUTE, mono, camera_offset=0.0)
-    r_off = replay_window("SP002", CC.ROUTE, mono, camera_offset=0.05)
+    r_off = replay_window("SP002", CC.ROUTE, mono, camera_offset=0.05,
+                          capture_outputs=("lane_lines", "lane_lines_prob"))
 
     assert r_none["camera_offset_used"] == 0.0, r_none["camera_offset_used"]
     same = np.nanmax(np.abs(r_none["desired_curvature"] - r_zero["desired_curvature"]))
     diff = np.nanmax(np.abs(r_none["desired_curvature"] - r_off["desired_curvature"]))
     print(f"GATE A: max|none-zero| = {same:.3e} (expect 0), max|none-0.05| = {diff:.3e} (expect > 0)")
-    assert same == 0.0, "offset=0.0 must equal the route default (param was 0.0)"
-    assert diff > 0.0, "offset=0.05 must change the replayed curvature"
+    assert same == 0.0 and diff > 0.0
     print("GATE A PASS")
+
+    ll = r_off["captured"]["lane_lines"]          # (N, 4, 33, 2)
+    lp = r_off["captured"]["lane_lines_prob"]     # (N, 8)
+    assert ll.shape == (N_FRAMES, 4, 33, 2), ll.shape
+    assert lp.shape == (N_FRAMES, 8), lp.shape
+    assert np.all((lp >= 0.0) & (lp <= 1.0)), "lane_lines_prob must be sigmoid output"
+    width0 = ll[10:, 2, 0, 0] - ll[10:, 1, 0, 0]  # inner width at x=0, post img-buffer warmup
+    print(f"GATE B: median inner lane width @x=0 = {np.median(width0):.2f} m (expect 2.5-5.0)")
+    assert 2.5 < float(np.median(width0)) < 5.0
+    print("GATE B PASS")
 
 
 if __name__ == "__main__":

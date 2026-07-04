@@ -348,6 +348,10 @@ class ReplayState:
 
         self.prev_curvature = 0.0  # prev_action.desiredCurvature seed
 
+        # M2a capture hooks: the centering workflow reads these after each step.
+        self.last_vision_out: dict | None = None
+        self.last_policy_out: dict | None = None
+
     # ----- the per-frame update --------------------------------------------------------
     def _roll_desire(self, vec_desire: np.ndarray) -> None:
         """Desire pulse roll, copied from modeld.py:112-125. No-op on all-zero vec_desire,
@@ -401,6 +405,10 @@ class ReplayState:
             self.numpy_inputs["traffic_convention"],
             self.numpy_inputs["features_buffer"],
         )
+
+        # M2a capture hooks: the centering workflow reads these after each step.
+        self.last_vision_out = vision_out
+        self.last_policy_out = policy_out
 
         # --- curvature post-step (modeld.py:163-178; fill_model_msg.get_curvature_from_output) ---
         plan = policy_out["plan"]            # (1, IDX_N, PLAN_WIDTH)
@@ -505,6 +513,25 @@ def window_transforms(ctx, camera_offset: float | None = None):
     return M_main, M_extra, used
 
 
+def _collect_captured(state, keys) -> dict:
+    """Pull the requested PARSED output arrays for the CURRENT frame from a stepped
+    ReplayState, dropping the batch axis. Vision outputs win on name collision
+    (lane_lines lives in the vision model for SP002/CD210/Nevada — verified from the
+    materialized driving_vision_metadata.pkl output_slices); falls back to the policy
+    outputs (e.g. 'plan'). Raises KeyError listing what IS available."""
+    vis = getattr(state, "last_vision_out", None) or {}
+    pol = getattr(state, "last_policy_out", None) or {}
+    out = {}
+    for k in keys:
+        if k in vis:
+            out[k] = np.array(vis[k][0], copy=True)
+        elif k in pol:
+            out[k] = np.array(pol[k][0], copy=True)
+        else:
+            raise KeyError(f"capture key {k!r} not found; vision has {sorted(vis)}, policy has {sorted(pol)}")
+    return out
+
+
 def replay_window(bundle: str, route_id: str, mono_times,
                   camera_offset: float | None = None,
                   capture_outputs: tuple[str, ...] = ()) -> dict:
@@ -544,6 +571,7 @@ def replay_window(bundle: str, route_id: str, mono_times,
     v_egos = _route_window_v_ego(route_id, mono_times)
 
     curvs = np.empty(len(mono_times), dtype=np.float64)
+    cap_frames: list[dict] = []
     # The device 20Hz vision warp keeps a rolling buffer of `buf_len` frames and feeds the
     # model cat(buffer[:6], buffer[-6:]) = the OLDEST+NEWEST frame (compile_warp.py:101;
     # buffer_length = 5 if is_20hz else 2, modeld.py:75). So the two img channels are frames
@@ -575,8 +603,10 @@ def replay_window(bundle: str, route_id: str, mono_times,
         big_img = _pair(wide_buf[0], wide_buf[-1])
 
         curvs[i] = state.step({"img": img, "big_img": big_img}, float(v))
+        if capture_outputs:
+            cap_frames.append(_collect_captured(state, capture_outputs))
 
-    return {
+    result = {
         "route_id": route_id,
         "bundle": bundle,
         "mono_time": np.asarray(mono_times, dtype=np.float64),
@@ -586,6 +616,9 @@ def replay_window(bundle: str, route_id: str, mono_times,
         "lat_action_t": state.lat_action_t,
         "camera_offset_used": camera_offset_used,
     }
+    if capture_outputs:
+        result["captured"] = {k: np.stack([f[k] for f in cap_frames]) for k in capture_outputs}
+    return result
 
 
 def _pair(prev_sixchan: np.ndarray, cur_sixchan: np.ndarray) -> np.ndarray:

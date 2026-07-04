@@ -56,3 +56,25 @@ def test_replay_window_signature_has_new_params():
     params = inspect.signature(replay_window).parameters
     assert "camera_offset" in params and params["camera_offset"].default is None
     assert "capture_outputs" in params and params["capture_outputs"].default == ()
+
+
+def test_collect_captured_prefers_vision_then_policy():
+    from model_replay_sim.infer import _collect_captured
+    state = types.SimpleNamespace(
+        last_vision_out={"lane_lines": np.arange(4 * 33 * 2, dtype=np.float32).reshape(1, 4, 33, 2),
+                         "lane_lines_prob": np.full((1, 8), 0.5, dtype=np.float32)},
+        last_policy_out={"plan": np.ones((1, 33, 15), dtype=np.float32),
+                         "lane_lines": np.zeros((1, 4, 33, 2), dtype=np.float32)},  # collision: vision wins
+    )
+    out = _collect_captured(state, ("lane_lines", "lane_lines_prob", "plan"))
+    assert out["lane_lines"].shape == (4, 33, 2)
+    assert out["lane_lines"][0, 0, 1] == 1.0            # from vision (arange), not policy zeros
+    assert out["lane_lines_prob"].shape == (8,)
+    assert out["plan"].shape == (33, 15)
+
+
+def test_collect_captured_missing_key_raises():
+    from model_replay_sim.infer import _collect_captured
+    state = types.SimpleNamespace(last_vision_out={"a": np.zeros((1, 2))}, last_policy_out={})
+    with pytest.raises(KeyError):
+        _collect_captured(state, ("lane_lines",))
