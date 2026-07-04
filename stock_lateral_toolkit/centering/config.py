@@ -73,7 +73,7 @@ MAX_WORKERS_REPLAY = 4              # each worker holds a compiled model; raise 
 LANE_CENTER_EVAL_X_M = (0.0, 10.0)
 
 # --- M0 §5 S1 sweep ---
-SWEEP_OFFSETS_M = tuple(round(-0.10 + 0.02 * i, 3) for i in range(11))  # -0.10..+0.10
+SWEEP_OFFSETS_M = tuple(round(-0.16 + 0.02 * i, 3) for i in range(14))  # -0.16..+0.10 (amended 2026-07-04b)
 CONTROL_OFFSETS_M = (-0.005, 0.005) # negative-control points -> noise band NB
 WEAVE_NOISE_FLOOR = 0.03
 WEAVE_HARD_CAP = (0.85, 1.15)

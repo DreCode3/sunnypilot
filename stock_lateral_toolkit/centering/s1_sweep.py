@@ -155,8 +155,9 @@ def analyze() -> None:
         pts = [_point_metrics(o, w["window_id"], bases[w["window_id"]]) for w in wins]
         controls[o] = float(np.mean([p["band_ratio"] for p in pts]))
 
-    p_cam = json.loads((CC.RESULTS_DIR / "m1" / "m1_results.json").read_text())["median_offset_cam_m"] \
-        if (CC.RESULTS_DIR / "m1" / "m1_results.json").exists() else float("nan")
+    _cons = CC.RESULTS_DIR / "m1" / "m1_results_consolidated.json"   # amended 2026-07-04b: sizing uses consolidated P
+    _m1 = _cons if _cons.exists() else (CC.RESULTS_DIR / "m1" / "m1_results.json")
+    p_cam = json.loads(_m1.read_text())["median_offset_cam_m"] if _m1.exists() else float("nan")
     if not np.isfinite(p_cam):
         print("NOTE: M1 not done yet — gates evaluated with p_cam=nan (sizing gates will fail); "
               "re-run --analyze after Task 9.")
