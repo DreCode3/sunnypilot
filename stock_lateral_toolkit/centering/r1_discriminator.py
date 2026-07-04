@@ -52,7 +52,9 @@ def _video_lines_per_frame() -> dict[int, dict]:
     out = {}
     for fi, e in by_frame.items():
         if len(e["left"]) >= 2 and len(e["right"]) >= 2:
+            man = manifest[fi]
             out[fi] = {"mono_time": e["mono_time"],
+                       "seg_num": int(man["seg_num"]), "seg_id": int(man["seg_id"]),
                        "y_left_cal": G.y_cal_from_y_road(float(np.median(e["left"]))),
                        "y_right_cal": G.y_cal_from_y_road(float(np.median(e["right"])))}
     return out
@@ -74,10 +76,18 @@ def _sp002_lines() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 def main():
     video = _video_lines_per_frame()
     mono, yl, yr = _sp002_lines()
+    # Match by FRAME IDENTITY via the frame timeline's eof timestamps — the manifest
+    # mono_time is the modelV2 publish time (eof + latency) and can never mono-match.
+    from model_replay_sim.alignment import build_frame_timeline
+    eof_by_seg = {(row.segment_num, row.segment_id): row.timestamp_eof_s
+                  for row in build_frame_timeline(CC.ROUTE)}
     d_left, d_right = [], []
     for fi, v in sorted(video.items()):
-        k = int(np.argmin(np.abs(mono - v["mono_time"])))
-        if abs(mono[k] - v["mono_time"]) > 1e-3:
+        eof = eof_by_seg.get((v["seg_num"], v["seg_id"]))
+        if eof is None:
+            continue
+        k = int(np.argmin(np.abs(mono - eof)))
+        if abs(mono[k] - eof) > 1e-3:
             continue
         d_left.append(float(yl[k]) - v["y_left_cal"])
         d_right.append(float(yr[k]) - v["y_right_cal"])
