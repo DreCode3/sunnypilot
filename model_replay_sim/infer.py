@@ -490,7 +490,24 @@ def _route_window_v_ego(route_id: str, mono_times) -> np.ndarray:
     return arr
 
 
-def replay_window(bundle: str, route_id: str, mono_times) -> dict:
+def window_transforms(ctx, camera_offset: float | None = None):
+    """The per-window forward warp matrices (M_main, M_extra) + the offset actually used.
+
+    ``camera_offset=None`` -> the route's own logged param (``ctx.camera_offset``); an
+    explicit float REPLACES it (S1 counterfactual). Production EMAs the live param
+    (0.9*actual + 0.1*param per frame -> steady state == param, camera_offset_helper.py);
+    a static-scene replay uses the steady value directly (see warp.model_transform).
+    """
+    from model_replay_sim.warp import model_transform
+    used = float(camera_offset) if camera_offset is not None else float(getattr(ctx, "camera_offset", 0.0))
+    M_main = model_transform(ctx, wide=False, camera_offset=used)
+    M_extra = model_transform(ctx, wide=True, camera_offset=used)
+    return M_main, M_extra, used
+
+
+def replay_window(bundle: str, route_id: str, mono_times,
+                  camera_offset: float | None = None,
+                  capture_outputs: tuple[str, ...] = ()) -> dict:
     """Replay a window of ``mono_times`` through ``bundle`` on ``route_id`` and return the
     desiredCurvature series.
 
@@ -502,12 +519,16 @@ def replay_window(bundle: str, route_id: str, mono_times) -> dict:
     ``warp.frame_to_model_input`` (that helper pairs only a single (prev, current) and is used
     by tests) — it threads a ring buffer so the two img channels span ``buf_len`` frames.
 
+    camera_offset: None = the route's logged param; float = counterfactual override (S1
+    sweep). capture_outputs: names of parsed model outputs captured per frame into
+    result["captured"] (vision outputs win on name collision; see _collect_captured).
+
     Returns ``{"route_id","bundle","mono_time": (N,), "desired_curvature": (N,),
     "v_ego": (N,), "frames": [(seg_num,seg_id),...]}``.
     """
     from model_replay_sim.alignment import map_window_to_frames, read_frame, read_wide_frame
     from model_replay_sim.context import route_context
-    from model_replay_sim.warp import model_transform, frame_to_sixchan
+    from model_replay_sim.warp import frame_to_sixchan
 
     _warn_if_unvalidated(bundle)  # loud guard for cross-model (non-anchor) bundles, before heavy compute
 
@@ -517,8 +538,7 @@ def replay_window(bundle: str, route_id: str, mono_times) -> dict:
     state = ReplayState(model, ctx, bundle)
 
     # one forward warp matrix per route (static scene; calib steady)
-    M_main = model_transform(ctx, wide=False)
-    M_extra = model_transform(ctx, wide=True)
+    M_main, M_extra, camera_offset_used = window_transforms(ctx, camera_offset)
 
     aligns = map_window_to_frames(route_id, mono_times)
     v_egos = _route_window_v_ego(route_id, mono_times)
@@ -564,6 +584,7 @@ def replay_window(bundle: str, route_id: str, mono_times) -> dict:
         "v_ego": v_egos,
         "frames": [(a.segment_num, a.segment_id) for a in aligns],
         "lat_action_t": state.lat_action_t,
+        "camera_offset_used": camera_offset_used,
     }
 
 
