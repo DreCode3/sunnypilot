@@ -37,11 +37,15 @@ def _char_sets():
   return tuple(sorted(ord(c) for c in base)), tuple(sorted(ord(c) for c in unifont))
 
 
-def _glyph_metrics(glyphs, rects, codepoints):
+def _glyph_metrics(glyphs, rects, glyph_count):
+  # Read each glyph's codepoint from GlyphInfo.value rather than assuming positional
+  # identity with the request list — raylib >= 6 drops codepoints the font lacks, so
+  # glyph i is the i-th FOUND codepoint (raylib 5 keeps 1:1, where value matches too).
   entries = []
   min_offset_y, max_extent = None, 0
-  for idx, codepoint in enumerate(codepoints):
+  for idx in range(glyph_count):
     glyph = glyphs[idx]
+    codepoint = int(glyph.value)
     rect = rects[idx]
     width = int(round(rect.width))
     height = int(round(rect.height))
@@ -99,22 +103,26 @@ def _process_font(font_path: Path, codepoints: tuple[int, ...]):
   cp_ptr = rl.ffi.cast("int *", cp_buffer)
   try:
     glyphs = rl.load_font_data(rl.ffi.cast("unsigned char *", file_buf), len(data), font_size, cp_ptr, len(codepoints), rl.FontType.FONT_DEFAULT)
+    glyph_count = len(codepoints)
   except RuntimeError:
-    # raylib >= 6 appends an `int *glyphCount` out-param to LoadFontData
-    glyph_count = rl.ffi.new("int *", 0)
-    glyphs = rl.load_font_data(rl.ffi.cast("unsigned char *", file_buf), len(data), font_size, cp_ptr, len(codepoints), rl.FontType.FONT_DEFAULT, glyph_count)
-  if glyphs == rl.ffi.NULL:
+    # raylib >= 6 appends an `int *glyphCount` out-param to LoadFontData and DROPS
+    # codepoints the font lacks (raylib 5 substituted placeholders), so the returned
+    # array can be SHORTER than the request — every downstream count must use it.
+    gc_out = rl.ffi.new("int *", 0)
+    glyphs = rl.load_font_data(rl.ffi.cast("unsigned char *", file_buf), len(data), font_size, cp_ptr, len(codepoints), rl.FontType.FONT_DEFAULT, gc_out)
+    glyph_count = gc_out[0]
+  if glyphs == rl.ffi.NULL or glyph_count <= 0:
     raise RuntimeError("raylib failed to load font data")
 
   rects_ptr = rl.ffi.new("Rectangle **")
-  image = rl.gen_image_font_atlas(glyphs, rects_ptr, len(codepoints), font_size, GLYPH_PADDING, 0)
+  image = rl.gen_image_font_atlas(glyphs, rects_ptr, glyph_count, font_size, GLYPH_PADDING, 0)
   if image.width == 0 or image.height == 0:
     raise RuntimeError("raylib returned an empty atlas")
 
   rects = rects_ptr[0]
   atlas_name = f"{font_path.stem}.png"
   atlas_path = FONT_DIR / atlas_name
-  entries, line_height, base = _glyph_metrics(glyphs, rects, codepoints)
+  entries, line_height, base = _glyph_metrics(glyphs, rects, glyph_count)
 
   if not rl.export_image(image, atlas_path.as_posix()):
     raise RuntimeError("Failed to export atlas image")
