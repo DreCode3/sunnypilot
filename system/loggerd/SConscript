@@ -9,10 +9,12 @@ src = ['logger.cc', 'zstd_writer.cc', 'video_writer.cc', 'encoder/encoder.cc', '
 if arch != "larch64":
   src += ['encoder/ffmpeg_encoder.cc']
   libs += ['yuv']
-  if arch == "Darwin":
-    frameworks += ['VideoToolbox', 'CoreMedia', 'CoreFoundation', 'CoreVideo']
-  else:
-    libs += ['va', 'va-drm', 'drm']
+if arch == "Darwin":
+  frameworks += ['VideoToolbox', 'CoreMedia', 'CoreFoundation', 'CoreVideo']
+else:
+  # the venv's static ffmpeg is built with VA-API hwaccel (also on AGNOS/larch64,
+  # observed on AGNOS w/ python 3.12 ffmpeg: 83 undefined va* refs at link)
+  libs += ['va', 'va-drm', 'drm']
 
 if arch == "Darwin":
   # exclude v4l
