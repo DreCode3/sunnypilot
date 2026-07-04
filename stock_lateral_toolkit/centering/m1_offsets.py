@@ -99,10 +99,19 @@ def main():
                          f"unfilled verdicts (of {len(reviewed_rows)}). Fill it, then re-run.")
     ok, frac = trust_check(filled)
     print(f"trust rule: reviewed acceptance = {frac:.0%} (threshold {CC.REVIEW_ACCEPT_MIN:.0%})")
+    full_manual = all((r.get("verdict") or "").strip() for r in props)
     if not ok:
-        raise SystemExit("TRUST RULE FAILED (M0 §2): automated annotations are NOT trusted. "
-                         "Full manual annotation pass required — fill verdict+corrected_u_px "
-                         "for EVERY row of proposals.csv and re-run.")
+        if full_manual:
+            # M0 §2's prescribed fallback: on a subset-trust failure, a FULL manual pass
+            # (every proposals.csv row verdicted) supersedes automation trust entirely —
+            # the analysis below consumes only the verdicts, never bare auto_ok rows.
+            print(f"TRUST RULE FAILED on the subset ({frac:.0%} < {CC.REVIEW_ACCEPT_MIN:.0%}) — "
+                  f"proceeding on the FULL MANUAL PASS ({len(props)}/{len(props)} rows verdicted) "
+                  "per the M0 §2 fallback.")
+        else:
+            raise SystemExit("TRUST RULE FAILED (M0 §2): automated annotations are NOT trusted. "
+                             "Full manual annotation pass required — fill verdict+corrected_u_px "
+                             "for EVERY row of proposals.csv and re-run.")
 
     by_frame: dict[int, list] = {}
     for r in props:
@@ -144,6 +153,7 @@ def main():
                                                     if r["speed_bin"] == sb]))
                           for sb in sorted({r["speed_bin"] for r in out_rows})},
         "review_acceptance": frac,
+        "review_mode": "full_manual" if full_manual else "subset_trust",
     }
     with open(m1 / "per_frame_offsets.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(out_rows[0].keys()))

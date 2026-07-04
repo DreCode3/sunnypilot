@@ -104,3 +104,22 @@ offset~roll (calibrated permutation p, Spearman r); R3 per-corridor spread.
   never aLat-primary). Eligibility masks are re-derived per analysis.
 - Every agent-produced number in gate reports is independently re-computed
   before a phase verdict is accepted (memory `feedback_verify_agent_outputs`).
+
+## Addendum 2026-07-04 (execution)
+Known at amendment time: proposals + overlays existed for 42 frames; no M/R verdict had
+been issued; the S1 sweep's non-sizing gates had passed on SP002.
+1. **Reviewer change (§2):** the user delegated the annotation spot-review to Claude
+   (visual inspection of overlay PNGs), directed in-session. Review semantics unchanged.
+2. **Trust-rule outcome (§2):** subset acceptance 45/54 = 83.3% < 85% → rule FAILED at
+   the letter (8 of 9 rejects were rows the automation itself had flagged auto_ok=False;
+   filter-passed acceptance was 45/46). The §2 fallback was executed as prescribed: a
+   FULL manual pass over all 252 proposal rows (195 accept / 57 reject; rejects dominated
+   by dashed-line sample distances landing in dash gaps). m1_offsets.py §2-fallback mode:
+   with every row verdicted, analysis consumes only verdicts (no automation trust).
+3. **Usable-frame floor (§2):** 22 frames with ≥2 accepted distances per side (< 40) →
+   the pre-registered second-route escalation (route_stock04 video pull) is REQUIRED and
+   was authorized by the user 2026-07-04. No M3/R verdict is issued on stock05 alone.
+4. **Matching clarification (no tolerance change):** M1↔M2 overlap matching is by frame
+   identity ((seg_num, seg_id) → frame-timeline eof timestamp), not raw mono_time — the
+   manifest's mono_time is the modelV2 publish time (eof + inference latency), which a
+   1 ms mono match structurally cannot hit.

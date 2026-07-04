@@ -120,17 +120,29 @@ def run_stats() -> None:
         res["per_window"][str(wid)] = {"per_bundle": per, "pairs": pairs,
                                        "consensus_median_y0_m": float(np.median(np.median(stacked, axis=0)))}
 
-    # overlap vs M1 (matched by mono_time within 0.001 s — sampler drew from these windows)
+    # overlap vs M1, matched by FRAME IDENTITY: the manifest's (seg_num, seg_id) maps
+    # through the frame timeline to the eof timestamps the replay windows are keyed on.
+    # (The manifest's own mono_time is the modelV2 PUBLISH time — eof + inference
+    # latency — so a raw 1 ms mono match can never hit; frame identity is exact.)
     m1_csv = CC.RESULTS_DIR / "m1" / "per_frame_offsets.csv"
     if m1_csv.exists():
+        from model_replay_sim.alignment import build_frame_timeline
+        eof_by_seg = {(row.segment_num, row.segment_id): row.timestamp_eof_s
+                      for row in build_frame_timeline(CC.ROUTE)}
+        manifest = {int(r["frame_idx"]): r for r in
+                    csv.DictReader(open(CC.RESULTS_DIR / "m1" / "frames_manifest.csv"))}
         m1_rows = [r for r in csv.DictReader(open(m1_csv)) if r["in_m2_window"] == "True"]
         mono_cat = np.concatenate(mono_all)
         for b in CC.BUNDLES_M2:
             cat = np.concatenate(centers_all[b])
             deltas = []
             for r in m1_rows:
-                k = int(np.argmin(np.abs(mono_cat - float(r["mono_time"]))))
-                if abs(mono_cat[k] - float(r["mono_time"])) < 1e-3:
+                man = manifest[int(r["frame_idx"])]
+                eof = eof_by_seg.get((int(man["seg_num"]), int(man["seg_id"])))
+                if eof is None:
+                    continue
+                k = int(np.argmin(np.abs(mono_cat - eof)))
+                if abs(mono_cat[k] - eof) < 1e-3:
                     deltas.append(float(cat[k]) - float(r["offset_cam_m"]))
             res["vs_m1"][b] = {"n_overlap": len(deltas),
                                "median_model_minus_video_m": float(np.median(deltas)) if deltas else None,
