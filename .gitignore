@@ -134,3 +134,4 @@ cleanroom_lateral_analysis/analysis/figures/
 **/analysis/figures/*.png
 longitudinal_weave/**/*.png
 learned_param_studies/**/*.png
+stock_lateral_toolkit/centering/results/
