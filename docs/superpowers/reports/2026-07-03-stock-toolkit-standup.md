@@ -92,5 +92,15 @@ dependency removed, absolute paths made repo-relative.
 - Step 1 toolkit: ready for daily use (`stock_lateral_toolkit/README.md`).
 - Step 2 simulator: SP002 registered; anchor verdict below determines `anchor_validated`.
 - Step 3 (full library re-validation on a stock corpus) not started — next session.
-- Open threads unchanged: centering regression (static-centering port), F3 AOL safeguard,
-  low-speed weave characterization (needs a dedicated low-speed matched drive).
+- Open threads — UPDATED per user direction (2026-07-03, post-session):
+  * **Centering: fresh approach, NOT a port** of the fork package (user: don't assume the
+    first solution was optimal). Measure the stock deficit first — the logged-|offset|
+    measurement is model-frame-confounded (comma model's +0.15 m-left lane-center
+    definition), and stock-native levers like `CameraOffset` / the known −3.05° camera-yaw
+    mount offset are candidates before any control-loop work.
+  * **F3 AOL safeguard: deprioritized to backlog.** User reports zero AOL-like behavior on
+    stock across all drives incl. lane changes; the incident's one confirmed amplifier (the
+    fork's golden-PI phase lag) doesn't exist on stock, and the open delivery tail hasn't
+    reproduced. Remains a real upstream missing-safety-net (candidate upstream contribution),
+    not an implicated defect.
+  * Low-speed weave characterization (needs a dedicated low-speed matched drive) — unchanged.
