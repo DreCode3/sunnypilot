@@ -19,6 +19,15 @@ wrote can return the stale value):
 all doubt; per feedback_pi_param_drift, verify the param state before each pass).
 
 ## Corridor & schedule (feedback_lateral_ab_metrics: same location + speed match)
+> **AMENDED 2026-07-06 (user-approved, driving-budget cut): MINIMAL ABBA DESIGN.**
+> 2 round trips / 4 legs: L1 out=A, L2 back=B, L3 out=B, L4 back=A (2 toggles, both
+> at the far-end turnaround; device ends on 0.0). Each arm sees each direction once;
+> ABBA counterbalances session-time drift. PRIMARY (video) keeps full power (per-frame
+> n≈34+/arm vs +0.10 m predicted shift). WEAVE secondary loses pass replication →
+> if the weave criterion is MARGINAL (fails only one of {n.s., ≤+15%} or flips across
+> directions), the pre-registered contingency is ONE more ABBA session, not adoption
+> or rejection. Exclude the first 30 s after each toggle (settling). The original
+> design below stands as reference.
 - Corridor: the hiram corridor (the stock 04/05 route), BOTH directions.
 - ≥3 passes per arm per direction, interleaved A,B,A,B,A,B (never blocked AABB).
 - Fixed cruise set-speed per corridor leg (pick the leg's normal speed; same both arms).
