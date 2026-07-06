@@ -7,9 +7,14 @@ Device prep per reference_device_config: `DisableUpdates=1`, double-reboot gotch
 ## Arms
 - A (control): CameraOffset = 0.0
 - B (treatment): CameraOffset = -0.12
-Toggle ONLY while PARKED between passes, via SSH:
-  python3 -c "from openpilot.common.params import Params; Params().put('CameraOffset', '<value>')"
-  python3 -c "from openpilot.common.params import Params; print(Params().get('CameraOffset'))"
+Toggle ONLY while PARKED between passes, via SSH (verified on-device 2026-07-06;
+the v2026.002.001 params API is TYPED — CameraOffset is FLOAT, put a float NOT a
+string, and read back from a SEPARATE process — a get() in the same process that
+wrote can return the stale value):
+  cd /data/openpilot && PYTHONPATH=/data/openpilot /usr/local/venv/bin/python -c \
+    "from openpilot.common.params import Params; Params().put('CameraOffset', <value>)"
+  PYTHONPATH=/data/openpilot /usr/local/venv/bin/python -c \
+    "from openpilot.common.params import Params; print(Params().get('CameraOffset'))"
 (read-back REQUIRED; modeld EMAs the param in ~0.5 s, but toggling parked removes
 all doubt; per feedback_pi_param_drift, verify the param state before each pass).
 
