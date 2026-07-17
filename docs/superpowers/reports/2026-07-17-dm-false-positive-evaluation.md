@@ -57,3 +57,17 @@ Census tooling: scratchpad `dm_census.py` (parallel rlog scan: events, distracte
 phoneProb/pose/calib, alert seconds); frames via ffmpeg select on dcamera.hevc
 (NOTE: per-segment rlogs start with an initData stamped with ROUTE-start mono time — use
 the first non-initData message for segment t0 when mapping mono→video offsets).
+
+## Post-deploy verification (same day, threshold 0.8 live — routes 1f/20/21/22)
+
+Objective improvement, normalized per lateral-active minute (20.6 min today vs 62.6 on 07/16):
+- **Alert episodes: 0.99/min → 0.15/min (−85%; prediction was −87%)** — 3 residual episodes.
+- Raw alert events: 7.4/min → 0.73/min (−90%). "Pay Attention" display: 8.6% → 0.8% of engaged time.
+- Posture signature UNCHANGED (phoneProb P90 0.574→0.599) → gain is the threshold, as designed.
+
+Residual mode (dcamera frames at all 3 episodes, phoneProb peaks 0.89–0.92): **left hand up
+adjusting the sling — two hands + brace bulk at chest center**, reading as a held object. In one
+frame the gaze is genuinely down at the hands; these residuals are borderline-legitimate nudges,
+not pure FPs. Threshold sensitivity (dwells ≥3.5 s, both days): 0.8 → 8+5; 0.85 → 2+1; 0.9 → 0+0.
+0.9 would functionally disable the phone detector for this cab. Standing value: **0.8** (user may
+opt to 0.85 if residual nags still intrude; 0.9 not recommended).
