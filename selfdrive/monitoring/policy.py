@@ -43,11 +43,13 @@ class DRIVER_MONITOR_SETTINGS:
     self._EYE_THRESHOLD = 0.65
     self._SG_THRESHOLD = 0.9
     self._BLINK_THRESHOLD = 0.865
-    # 0.8 (upstream 0.5): this cab's permanently-mounted nav phone sits inside the DM crop
-    # and the driver's resting hand posture reads as phone-use — measured 2026-07-16 census:
-    # phoneProb P90 0.574/P95 0.723 with eyes verifiably on the road (461/464 alert events
-    # were phone-type false positives). 0.8 cuts trigger-frames 12.9%->2.8%.
-    self._PHONE_THRESH = 0.8
+    # 0.85 (upstream 0.5): this cab's permanently-mounted nav phone sits inside the DM crop
+    # and the driver's resting hand posture reads as phone-use — 2026-07-16 census: phoneProb
+    # P90 0.574/P95 0.723 with eyes verifiably on the road (461/464 alert events were
+    # phone-type false positives). 0.8 verified −85% episodes on 07/17 test drives; raised
+    # to 0.85 for residual sling-adjustment spikes (peaks 0.89–0.92; dwells 8+5 -> 2+1 across
+    # both census days). 0.9 measured as 0 dwells = detector effectively off — do NOT go there.
+    self._PHONE_THRESH = 0.85
     self._POSE_PITCH_THRESHOLD = 0.3133
     self._POSE_PITCH_THRESHOLD_SLACK = 0.3237
     self._POSE_PITCH_THRESHOLD_STRICT = self._POSE_PITCH_THRESHOLD
