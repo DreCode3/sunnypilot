@@ -85,6 +85,7 @@ class CenteringTrim:
     self.accel_trim = 0.0
     self.gated_frames = 0
     self.gated_seconds = 0.0
+    self.params_read_failed = False    # latched; see get_params
     self.get_params()
 
   def get_params(self) -> None:
@@ -104,6 +105,19 @@ class CenteringTrim:
       self.mode = int(mode) if mode is not None else MODE_OFF
     except Exception:                                        # deliberately broad -- see docstring
       self.mode = MODE_OFF
+      # Log ONCE, not on every ~3 s refresh. Without this a genuine params failure is
+      # indistinguishable from OFF-by-choice except via flat shadow telemetry (QA F-16).
+      # The import is lazy and the whole thing is nested in its own try so that neither a
+      # missing swaglog nor a logging error can turn an inert feature into a fatal one --
+      # which is the entire point of the broad except above. It also keeps this module's
+      # import surface at  alone, so the tests still run in an unbuilt tree.
+      if not self.params_read_failed:
+        self.params_read_failed = True
+        try:
+          from openpilot.common.swaglog import cloudlog
+          cloudlog.exception("centering_trim: LateralCenteringTrim unreadable, degrading to MODE_OFF")
+        except Exception:
+          pass
 
     # Gate on the PLATFORM, not the brand. Every constant above -- TARGET_OFFSET, A_MAX, KI,
     # the stiffness C they are derived from, the lane-width band -- was measured on ONE car

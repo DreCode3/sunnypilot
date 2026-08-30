@@ -8,6 +8,7 @@ Unit tests for CenteringTrim. Constants are numeric twins of
 docs/superpowers/specs/2026-08-30-sd28-lateral-remediation-design.md -- change the spec first.
 """
 import math
+import os
 
 from types import SimpleNamespace
 
@@ -198,11 +199,23 @@ def test_saturated_authority_is_bounded_by_the_measured_stiffness():
   assert displacement < ABORT_M, f"a saturated trim would displace {displacement:.3f} m"
 
 
+def test_rate_tests_actually_exercise_the_clamp():
+  """Meta-test: the two RATE_MAX tests are only meaningful if the unclamped rate EXCEEDS
+  RATE_MAX at the offset they drive.  Without this, moving the drive offset back inside
+  RATE_MAX/KI silently makes both of them vacuous -- which is how they shipped (QA F-08)."""
+  e = (OFFSET_MAX - 0.005) - TARGET_OFFSET
+  assert KI * e > RATE_MAX, (
+      f"rate tests are VACUOUS: unclamped KI*e = {KI * e:.6f} <= RATE_MAX = {RATE_MAX}")
+
+
 def test_rate_never_exceeds_rate_max():
   t = CenteringTrim(FakeParams(MODE_ACTIVE), SUPPORTED_FINGERPRINT)
   prev = t.accel_trim
-  model = make_model(offset=TARGET_OFFSET + 1.4)
-  # saturating, but INSIDE OFFSET_MAX -- past it the plausibility gate rejects every frame and the test becomes vacuous
+  # RATE_MAX only binds for |e| > RATE_MAX/KI = 1.4286 m, and the OFFSET_MAX gate admits
+  # e <= 1.456 m -- a 27 mm window.  Driven at TARGET_OFFSET + 1.4 (the original value) the
+  # clamp NEVER engages and removing it kills 0 of 37 tests (QA F-08).  Driven here at the top
+  # of the admissible window instead, so the clamp is actually exercised.
+  model = make_model(offset=OFFSET_MAX - 0.005)
   for _ in range(5000):
     t.update(make_cs(), model, True, DT)
     assert abs(t.accel_trim - prev) <= RATE_MAX * DT + 1e-12
@@ -215,8 +228,11 @@ def test_full_authority_takes_at_least_forty_seconds():
   justified against. The real curve-windup guard is test_curve_windup_is_bounded, which is
   driven at the curve's MEASURED 0.27 m error rather than at the saturating one."""
   t = CenteringTrim(FakeParams(MODE_ACTIVE), SUPPORTED_FINGERPRINT)
-  model = make_model(offset=TARGET_OFFSET + 1.4)
-  # saturating, but INSIDE OFFSET_MAX -- past it the plausibility gate rejects every frame and the test becomes vacuous
+  # RATE_MAX only binds for |e| > RATE_MAX/KI = 1.4286 m, and the OFFSET_MAX gate admits
+  # e <= 1.456 m -- a 27 mm window.  Driven at TARGET_OFFSET + 1.4 (the original value) the
+  # clamp NEVER engages and removing it kills 0 of 37 tests (QA F-08).  Driven here at the top
+  # of the admissible window instead, so the clamp is actually exercised.
+  model = make_model(offset=OFFSET_MAX - 0.005)
   n = 0
   while abs(t.accel_trim) < A_MAX - 1e-9 and n < 100000:
     t.update(make_cs(), model, True, DT)
@@ -457,3 +473,67 @@ def test_the_supported_platform_is_not_gated():
   t = CenteringTrim(FakeParams(MODE_ACTIVE), SUPPORTED_FINGERPRINT)
   assert t.mode == MODE_ACTIVE
   assert run(t, 500, model=make_model(offset=TARGET_OFFSET + 0.3)) != 0.0
+
+
+# ---------------------------------------------------------------------------------------
+# Wiring tests (QA F-09).  The one line in controlsd.py that makes this feature real was
+# under no test at all: nothing caught the trim being added AFTER clip_curvature (which
+# would escape every jerk/accel/curvature limiter), into the wrong variable, or twice.
+#
+# These parse controlsd.py with ast rather than importing it, so they run in an UNBUILT
+# worktree -- the same constraint that made this hard to cover in the first place.
+# ---------------------------------------------------------------------------------------
+
+def _controlsd_ast():
+  import ast
+  here = os.path.dirname(os.path.abspath(__file__))
+  root = os.path.abspath(os.path.join(here, "..", "..", "..", "..", "..", ".."))
+  path = os.path.join(root, "openpilot", "selfdrive", "controls", "controlsd.py")
+  assert os.path.exists(path), f"controlsd.py not found at {path}"
+  return ast.parse(open(path).read()), path
+
+
+def _trim_augassign_and_clip_call(tree):
+  import ast
+  aug, clip = [], []
+  for node in ast.walk(tree):
+    if isinstance(node, ast.AugAssign) and isinstance(node.op, ast.Add):
+      if "centering_trim" in ast.dump(node.value):
+        aug.append(node)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "clip_curvature":
+      clip.append(node)
+  return aug, clip
+
+
+def test_trim_is_applied_exactly_once_in_controlsd():
+  tree, path = _controlsd_ast()
+  aug, _ = _trim_augassign_and_clip_call(tree)
+  assert len(aug) == 1, f"expected exactly 1 centering_trim += site in {path}, found {len(aug)}"
+
+
+def test_trim_target_is_new_desired_curvature():
+  import ast
+  tree, _ = _controlsd_ast()
+  aug, _ = _trim_augassign_and_clip_call(tree)
+  target = aug[0].target
+  assert isinstance(target, ast.Name) and target.id == "new_desired_curvature", \
+      "the trim must be added to new_desired_curvature, the value clip_curvature bounds"
+
+
+def test_trim_is_applied_BEFORE_clip_curvature():
+  """The whole safety argument is that the trim inherits clip_curvature's jerk-rate clamp,
+  roll-compensated accel clamp and MAX_CURVATURE.  Applied after, it would escape all three."""
+  tree, _ = _controlsd_ast()
+  aug, clip = _trim_augassign_and_clip_call(tree)
+  assert len(clip) == 1, f"expected exactly 1 clip_curvature call, found {len(clip)}"
+  assert aug[0].lineno < clip[0].lineno, \
+      "the trim is applied AFTER clip_curvature -- it would bypass every lateral limiter"
+
+
+def test_clip_curvature_actually_receives_the_trimmed_value():
+  import ast
+  tree, _ = _controlsd_ast()
+  aug, clip = _trim_augassign_and_clip_call(tree)
+  names = [a.id for a in clip[0].args if isinstance(a, ast.Name)]
+  assert aug[0].target.id in names, \
+      f"clip_curvature does not receive {aug[0].target.id}; the trim would be discarded"
