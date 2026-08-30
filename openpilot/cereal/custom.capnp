@@ -382,6 +382,7 @@ struct CarControlSP @0xa5cd762cd951a455 {
   leadOne @2 :LeadData;
   leadTwo @3 :LeadData;
   intelligentCruiseButtonManagement @4 :IntelligentCruiseButtonManagement;
+  accelTrim @5 :Float32;   # CenteringTrim.accel_trim [m/s^2], + = trimming RIGHT
 
   struct Param {
     key @0 :Text;
