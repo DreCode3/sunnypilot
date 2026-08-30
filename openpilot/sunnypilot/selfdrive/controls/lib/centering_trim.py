@@ -13,9 +13,15 @@ spec first. All of them are measured on the sd28 corpus, which was recorded on T
 
 WHY THIS EXISTS
   On a Ford, LatControlAngle is pure feedforward and its ANGLE output is never transmitted:
-  opendbc/car/ford/carcontroller.py reads actuators.curvature. So roll, steerRatio,
-  stiffnessFactor and angleOffsetDeg cannot reach the command, and the only place a lateral
-  correction can enter is as an addition to the model's curvature.
+  opendbc/car/ford/carcontroller.py reads actuators.curvature. So steerRatio, stiffnessFactor
+  and angleOffsetDeg cannot reach the command, and the only place a lateral correction can
+  enter is as an addition to the model's curvature.
+
+  Correction (QA F-04): roll does NOT belong in that list. clip_curvature takes roll and
+  forms roll_compensation = roll * G into its accel clamp, whose output IS the transmitted
+  actuators.curvature -- so roll is structurally on the command path. It simply never bound
+  on sd28 (duty 0.0000 % on 8/8 drives, worst-case margin 0.098 m/s^2). That is a
+  corpus-scoped observation, not a structural guarantee.
 
 WHAT IT CORRECTS
   On sd28 the car sits +0.172 m left of the model's own perceived lane centre (7/7 drives),
