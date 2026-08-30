@@ -63,7 +63,10 @@ A_MAX = 0.40            # m/s^2. Sized from SAFETY, not reach. The natural param
                         # over-displacement is not. 0.40 is the largest value whose worst
                         # case (0.346 m at C=1.13e-3) stays inside the 0.35 m abort trigger,
                         # and it still delivers 100 % of the target on 6 of 7 drives and
-                        # 84 % on the stiffest. Re-derive after shadow measures C_DC.
+                        # 84 % on the stiffest. Re-derive after C_DC is measured UNDER
+                        # AUTHORITY -- shadow CANNOT measure it: with nothing applied the
+                        # car is never displaced, so no dose-response exists. The C floor
+                        # itself is unestablished; MODE_ACTIVE is blocked until it is.
 RATE_MAX = 0.010        # (m/s^2)/s. Full authority takes >=40 s (A_MAX/RATE_MAX); 500x below
                         # clip_curvature's 5/v^2 = 4.9e-3 1/m/s allowance, so it cannot
                         # perturb that limiter.
